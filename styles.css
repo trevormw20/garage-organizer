@@ -332,6 +332,24 @@ button.danger:hover { background: #b94343; }
   stroke-width: 3px;
 }
 
+.zone-rect { cursor: move; }
+.zone-label {
+  pointer-events: none;
+  fill: white;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.zone-label-iso {
+  pointer-events: auto;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  paint-order: stroke;
+  stroke: rgba(20,24,30,0.85);
+  stroke-width: 3px;
+}
+
 /* Modal */
 .modal {
   position: fixed;

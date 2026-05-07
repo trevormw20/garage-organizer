@@ -18,8 +18,11 @@ const CATEGORIES = [
 const DEFAULT_STATE = {
   version: 1,
   garage: { width: 30, height: 20, gridSize: 28, frontWall: "left" },
+  zones: [],
   containers: []
 };
+
+const ZONE_COLORS = ["#5cb85c", "#4a8fd6", "#d6c14a", "#9b59b6", "#e07b3a", "#d44c4c", "#3aa6c0", "#c45fa6"];
 
 const WALLS = [
   { id: "top",    label: "Top wall (y=0)" },
@@ -37,7 +40,8 @@ const REMOTE_FILE = "garage.json";
 
 let state = clone(DEFAULT_STATE);
 let view = "2d";
-let selectedId = null;
+let selectedId = null;       // selected container id
+let selectedZoneId = null;   // selected zone id (mutually exclusive with selectedId)
 let saveTimer = null;
 let lastSavedJson = "";
 let isoRotation = 0; // 0..3 (90° steps, CW)
@@ -52,6 +56,9 @@ function getCategory(id) {
 }
 function findContainer(id) {
   return state.containers.find(c => c.id === id);
+}
+function findZone(id) {
+  return state.zones.find(z => z.id === id);
 }
 
 // ============================================================
@@ -121,11 +128,17 @@ function ensureStateShape() {
   if (typeof state.garage.gridSize !== "number") state.garage.gridSize = 28;
   if (!state.garage.frontWall) state.garage.frontWall = "left";
   if (!Array.isArray(state.containers)) state.containers = [];
+  if (!Array.isArray(state.zones)) state.zones = [];
   for (const c of state.containers) {
     if (!c.id) c.id = uid();
     if (!c.contents) c.contents = [];
     if (typeof c.height3d !== "number") c.height3d = 1;
     if (!c.notes) c.notes = "";
+  }
+  for (const z of state.zones) {
+    if (!z.id) z.id = uid();
+    if (!z.notes) z.notes = "";
+    if (!z.color) z.color = ZONE_COLORS[0];
   }
 }
 
@@ -181,6 +194,7 @@ function importJson(file) {
       state = data;
       ensureStateShape();
       selectedId = null;
+      selectedZoneId = null;
       saveNow();
       render();
       toast("Imported successfully", "success");
@@ -295,6 +309,9 @@ function render2D() {
   // Door tick on front wall
   drawDoorTick2D(svg, M, gw, gh, cell, frontWall);
 
+  // Zone backgrounds (drawn first, behind containers)
+  for (const z of state.zones) drawZone2DBg(svg, z, M, cell);
+
   // Containers
   const sortedIds = state.containers.map(c => c.id);
   for (const c of state.containers) {
@@ -372,7 +389,82 @@ function render2D() {
     svg.appendChild(g);
   }
 
+  // Zone labels + resize handles drawn AFTER containers so they stay visible
+  for (const z of state.zones) drawZone2DLabel(svg, z, M, cell);
+
   vp.appendChild(svg);
+}
+
+function drawZone2DBg(svg, z, M, cell) {
+  const x = M + z.x * cell, y = M + z.y * cell;
+  const w = z.w * cell, h = z.h * cell;
+  const isSel = z.id === selectedZoneId;
+
+  const r = document.createElementNS(SVG_NS, "rect");
+  r.setAttribute("x", x); r.setAttribute("y", y);
+  r.setAttribute("width", w); r.setAttribute("height", h);
+  r.setAttribute("fill", z.color);
+  r.setAttribute("fill-opacity", "0.08");
+  r.setAttribute("stroke", z.color);
+  r.setAttribute("stroke-width", isSel ? 3 : 1.8);
+  r.setAttribute("stroke-dasharray", "8,5");
+  r.setAttribute("rx", 6);
+  r.classList.add("zone-rect");
+  r.dataset.zoneId = z.id;
+  r.addEventListener("mousedown", (e) => onZoneMouseDown(e, z));
+  r.addEventListener("contextmenu", (e) => { e.preventDefault(); showZoneContextMenu(e, z); });
+  svg.appendChild(r);
+}
+
+function drawZone2DLabel(svg, z, M, cell) {
+  const x = M + z.x * cell, y = M + z.y * cell;
+  const w = z.w * cell, h = z.h * cell;
+  const isSel = z.id === selectedZoneId;
+
+  const labelText = z.name || "Zone";
+  const fontSize = 12;
+  const padX = 8, padY = 4;
+  const approxTextW = labelText.length * (fontSize * 0.58) + padX * 2;
+  const labelW = Math.min(approxTextW, w - 8);
+  const labelH = fontSize + padY * 2;
+
+  const g = document.createElementNS(SVG_NS, "g");
+  g.style.cursor = "move";
+  g.dataset.zoneId = z.id;
+
+  const bg = document.createElementNS(SVG_NS, "rect");
+  bg.setAttribute("x", x + 4);
+  bg.setAttribute("y", y + 4);
+  bg.setAttribute("width", labelW);
+  bg.setAttribute("height", labelH);
+  bg.setAttribute("rx", 3);
+  bg.setAttribute("fill", z.color);
+  bg.setAttribute("fill-opacity", "0.92");
+  g.appendChild(bg);
+
+  const t = document.createElementNS(SVG_NS, "text");
+  t.setAttribute("x", x + 4 + padX);
+  t.setAttribute("y", y + 4 + labelH - padY - 1);
+  t.setAttribute("class", "zone-label");
+  t.textContent = labelText;
+  g.appendChild(t);
+
+  if (isSel) {
+    const handle = document.createElementNS(SVG_NS, "rect");
+    const hs = 10;
+    handle.setAttribute("x", x + w - hs);
+    handle.setAttribute("y", y + h - hs);
+    handle.setAttribute("width", hs);
+    handle.setAttribute("height", hs);
+    handle.setAttribute("class", "resize-handle");
+    handle.dataset.role = "resize-zone";
+    handle.dataset.id = z.id;
+    g.appendChild(handle);
+  }
+
+  g.addEventListener("mousedown", (e) => onZoneMouseDown(e, z));
+  g.addEventListener("contextmenu", (e) => { e.preventDefault(); showZoneContextMenu(e, z); });
+  svg.appendChild(g);
 }
 
 // 2D drag & resize
@@ -381,6 +473,7 @@ let dragState = null;
 function onContainerMouseDown(e, c) {
   e.stopPropagation();
   selectedId = c.id;
+  selectedZoneId = null;
   const role = e.target.dataset?.role;
   const cell = state.garage.gridSize;
   const svg = e.currentTarget.ownerSVGElement;
@@ -389,18 +482,15 @@ function onContainerMouseDown(e, c) {
   const M = 36;
   if (role === "resize") {
     dragState = {
+      kind: "container",
       mode: "resize",
-      id: c.id,
-      startW: c.w,
-      startH: c.h,
-      startPx: pt
+      id: c.id
     };
   } else {
     dragState = {
+      kind: "container",
       mode: "move",
       id: c.id,
-      startX: c.x,
-      startY: c.y,
       offsetX: pt.x - (M + c.x * cell),
       offsetY: pt.y - (M + c.y * cell)
     };
@@ -410,10 +500,35 @@ function onContainerMouseDown(e, c) {
   document.addEventListener("mouseup", onDocMouseUp);
 }
 
+function onZoneMouseDown(e, z) {
+  e.stopPropagation();
+  selectedZoneId = z.id;
+  selectedId = null;
+  const role = e.target.dataset?.role;
+  const cell = state.garage.gridSize;
+  const svg = e.currentTarget.ownerSVGElement || document.querySelector("#viewport svg");
+  const pt = svgPoint(svg, e);
+  const M = 36;
+  if (role === "resize-zone") {
+    dragState = { kind: "zone", mode: "resize", id: z.id };
+  } else {
+    dragState = {
+      kind: "zone",
+      mode: "move",
+      id: z.id,
+      offsetX: pt.x - (M + z.x * cell),
+      offsetY: pt.y - (M + z.y * cell)
+    };
+  }
+  render();
+  document.addEventListener("mousemove", onDocMouseMove);
+  document.addEventListener("mouseup", onDocMouseUp);
+}
+
 function onDocMouseMove(e) {
   if (!dragState) return;
-  const c = findContainer(dragState.id);
-  if (!c) return;
+  const item = dragState.kind === "zone" ? findZone(dragState.id) : findContainer(dragState.id);
+  if (!item) return;
   const cell = state.garage.gridSize;
   const M = 36;
   const svg = document.querySelector("#viewport svg");
@@ -423,20 +538,20 @@ function onDocMouseMove(e) {
   if (dragState.mode === "move") {
     let nx = Math.round((pt.x - dragState.offsetX - M) / cell);
     let ny = Math.round((pt.y - dragState.offsetY - M) / cell);
-    nx = clamp(nx, 0, state.garage.width - c.w);
-    ny = clamp(ny, 0, state.garage.height - c.h);
-    if (nx !== c.x || ny !== c.y) {
-      c.x = nx; c.y = ny;
+    nx = clamp(nx, 0, state.garage.width - item.w);
+    ny = clamp(ny, 0, state.garage.height - item.h);
+    if (nx !== item.x || ny !== item.y) {
+      item.x = nx; item.y = ny;
       render2D();
       renderSidebar();
     }
   } else if (dragState.mode === "resize") {
-    let nw = Math.max(1, Math.round((pt.x - M - c.x * cell) / cell));
-    let nh = Math.max(1, Math.round((pt.y - M - c.y * cell) / cell));
-    nw = Math.min(nw, state.garage.width - c.x);
-    nh = Math.min(nh, state.garage.height - c.y);
-    if (nw !== c.w || nh !== c.h) {
-      c.w = nw; c.h = nh;
+    let nw = Math.max(1, Math.round((pt.x - M - item.x * cell) / cell));
+    let nh = Math.max(1, Math.round((pt.y - M - item.y * cell) / cell));
+    nw = Math.min(nw, state.garage.width - item.x);
+    nh = Math.min(nh, state.garage.height - item.y);
+    if (nw !== item.w || nh !== item.h) {
+      item.w = nw; item.h = nh;
       render2D();
       renderSidebar();
     }
@@ -547,6 +662,12 @@ function renderIso() {
   const rotatedFrontWall = rotateWallId(frontWall, k);
   drawWallAccentIso(svg, rotatedFrontWall, gw, gh, ox, oy, isoX, isoY);
 
+  // Zone floor outlines (drawn before containers, but after floor)
+  for (const z of state.zones) {
+    const rb = rotBox({ x: z.x, y: z.y, w: z.w, h: z.h }, k, state.garage.width, state.garage.height);
+    drawZoneIso(svg, z, rb, ox, oy, isoX, isoY);
+  }
+
   // Compute rotated containers (each gets a {rb, c} pair where rb is rotated box)
   const rotated = state.containers.map(c => ({ c, rb: rotBox({ x: c.x, y: c.y, w: c.w, h: c.h }, k, state.garage.width, state.garage.height) }));
 
@@ -563,10 +684,54 @@ function renderIso() {
     drawIsoBox(svg, c, rb, color, ox, oy, isoX, isoY, HEIGHT_PX, cell);
   }
 
+  // Zone labels rendered AFTER containers so they stay visible
+  for (const z of state.zones) {
+    const rb = rotBox({ x: z.x, y: z.y, w: z.w, h: z.h }, k, state.garage.width, state.garage.height);
+    drawZoneIsoLabel(svg, z, rb, ox, oy, isoX, isoY);
+  }
+
   // Front-wall label rendered LAST so it sits on top
   drawWallLabelIso(svg, rotatedFrontWall, gw, gh, ox, oy, isoX, isoY);
 
   vp.appendChild(svg);
+}
+
+function drawZoneIso(svg, z, rb, ox, oy, isoX, isoY) {
+  const corners = [
+    [rb.x, rb.y],
+    [rb.x + rb.w, rb.y],
+    [rb.x + rb.w, rb.y + rb.h],
+    [rb.x, rb.y + rb.h]
+  ];
+  const points = corners.map(([gx, gy]) => `${isoX(gx, gy) + ox},${isoY(gx, gy) + oy}`).join(" ");
+  const poly = document.createElementNS(SVG_NS, "polygon");
+  poly.setAttribute("points", points);
+  poly.setAttribute("fill", z.color);
+  poly.setAttribute("fill-opacity", z.id === selectedZoneId ? "0.18" : "0.10");
+  poly.setAttribute("stroke", z.color);
+  poly.setAttribute("stroke-width", z.id === selectedZoneId ? 2.5 : 1.8);
+  poly.setAttribute("stroke-dasharray", "8,5");
+  poly.style.cursor = "pointer";
+  poly.addEventListener("click", (e) => { e.stopPropagation(); selectedZoneId = z.id; selectedId = null; render(); });
+  poly.addEventListener("contextmenu", (e) => { e.preventDefault(); showZoneContextMenu(e, z); });
+  svg.appendChild(poly);
+}
+
+function drawZoneIsoLabel(svg, z, rb, ox, oy, isoX, isoY) {
+  const cx = rb.x + rb.w / 2;
+  const cy = rb.y + rb.h / 2;
+  const px = isoX(cx, cy) + ox;
+  const py = isoY(cx, cy) + oy;
+  const t = document.createElementNS(SVG_NS, "text");
+  t.setAttribute("x", px);
+  t.setAttribute("y", py);
+  t.setAttribute("text-anchor", "middle");
+  t.setAttribute("class", "zone-label-iso");
+  t.setAttribute("fill", z.color);
+  t.style.cursor = "pointer";
+  t.textContent = z.name || "Zone";
+  t.addEventListener("click", (e) => { e.stopPropagation(); selectedZoneId = z.id; selectedId = null; render(); });
+  svg.appendChild(t);
 }
 
 // Rotate a wall id by k 90° CW steps. The wall stays attached to the same physical part
@@ -727,12 +892,18 @@ function shade(hex, pct) {
 
 function renderSidebar() {
   const sb = document.getElementById("sidebar");
+  if (selectedZoneId) {
+    const z = findZone(selectedZoneId);
+    if (!z) { selectedZoneId = null; renderSidebar(); return; }
+    renderZoneSidebar(sb, z);
+    return;
+  }
   if (!selectedId) {
     sb.innerHTML = `
       <div class="sidebar-empty">
-        <h3>Click a container</h3>
-        <p>Select a container in the garage to view or edit its contents, size, position, or stack.</p>
-        <p class="hint">Tip: drag to move, drag corner to resize. Right-click for quick actions.</p>
+        <h3>Click a container or zone</h3>
+        <p>Select a container or zone to view or edit it.</p>
+        <p class="hint">Drag to move, drag corner to resize. Right-click for quick actions.</p>
       </div>`;
     return;
   }
@@ -1004,6 +1175,140 @@ function escapeHtml(s) {
 }
 
 // ============================================================
+// Zones — sidebar + actions
+// ============================================================
+
+function renderZoneSidebar(sb, z) {
+  sb.innerHTML = `
+    <div class="detail-header">
+      <input type="color" class="detail-color" value="${z.color}" id="zoneColor" />
+      <input type="text" class="detail-name" value="${escapeHtml(z.name)}" id="zoneName" placeholder="Section name" />
+    </div>
+    <p class="hint" style="margin-top:0">Zone — a labeled wireframe section (e.g. "Storage", "Tools"). Containers can sit inside zones.</p>
+
+    <div class="row">
+      <div class="field"><label>X</label><input type="number" id="zoneX" value="${z.x}" min="0" /></div>
+      <div class="field"><label>Y</label><input type="number" id="zoneY" value="${z.y}" min="0" /></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Width</label><input type="number" id="zoneW" value="${z.w}" min="1" /></div>
+      <div class="field"><label>Depth</label><input type="number" id="zoneH" value="${z.h}" min="1" /></div>
+    </div>
+
+    <div class="field">
+      <label>Notes</label>
+      <textarea id="zoneNotes" placeholder="Anything special about this section…">${escapeHtml(z.notes || "")}</textarea>
+    </div>
+
+    <div class="danger-zone">
+      <button class="danger" id="deleteZone">Delete zone</button>
+    </div>
+  `;
+
+  document.getElementById("zoneName").addEventListener("input", e => {
+    z.name = e.target.value;
+    scheduleSave();
+    if (view === "2d") render2D(); else renderIso();
+  });
+  document.getElementById("zoneColor").addEventListener("input", e => {
+    z.color = e.target.value;
+    scheduleSave();
+    render();
+  });
+  document.getElementById("zoneX").addEventListener("change", e => {
+    z.x = clamp(parseInt(e.target.value) || 0, 0, state.garage.width - z.w);
+    scheduleSave(); render();
+  });
+  document.getElementById("zoneY").addEventListener("change", e => {
+    z.y = clamp(parseInt(e.target.value) || 0, 0, state.garage.height - z.h);
+    scheduleSave(); render();
+  });
+  document.getElementById("zoneW").addEventListener("change", e => {
+    z.w = clamp(parseInt(e.target.value) || 1, 1, state.garage.width - z.x);
+    scheduleSave(); render();
+  });
+  document.getElementById("zoneH").addEventListener("change", e => {
+    z.h = clamp(parseInt(e.target.value) || 1, 1, state.garage.height - z.y);
+    scheduleSave(); render();
+  });
+  document.getElementById("zoneNotes").addEventListener("input", e => {
+    z.notes = e.target.value;
+    scheduleSave();
+  });
+  document.getElementById("deleteZone").addEventListener("click", () => {
+    confirmDialog(`Delete zone "${z.name}"?`, "The zone will be removed (containers inside are not affected).", () => {
+      state.zones = state.zones.filter(x => x.id !== z.id);
+      selectedZoneId = null;
+      scheduleSave(); render();
+    });
+  });
+}
+
+function addZone() {
+  const used = new Set(state.zones.map(z => z.color));
+  const color = ZONE_COLORS.find(c => !used.has(c)) || ZONE_COLORS[state.zones.length % ZONE_COLORS.length];
+  const w = Math.min(8, state.garage.width);
+  const h = Math.min(6, state.garage.height);
+  const offset = state.zones.length;
+  const x = clamp(offset, 0, state.garage.width - w);
+  const y = clamp(offset, 0, state.garage.height - h);
+  const z = {
+    id: uid(),
+    name: "New Section",
+    color,
+    x, y, w, h,
+    notes: ""
+  };
+  state.zones.push(z);
+  selectedZoneId = z.id;
+  selectedId = null;
+  scheduleSave();
+  render();
+  setTimeout(() => {
+    const inp = document.getElementById("zoneName");
+    if (inp) { inp.focus(); inp.select(); }
+  }, 50);
+}
+
+function showZoneContextMenu(e, z) {
+  hideContextMenu();
+  selectedZoneId = z.id;
+  selectedId = null;
+  render();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  menu.style.left = e.clientX + "px";
+  menu.style.top = e.clientY + "px";
+  menu.innerHTML = `
+    <button data-act="duplicate-zone">Duplicate zone</button>
+    <button data-act="delete-zone" class="danger-item">Delete zone</button>
+  `;
+  document.body.appendChild(menu);
+  ctxMenuEl = menu;
+  menu.addEventListener("click", (ev) => {
+    const act = ev.target.dataset?.act;
+    if (act === "duplicate-zone") {
+      const copy = clone(z);
+      copy.id = uid();
+      copy.name = z.name + " (copy)";
+      copy.x = clamp(z.x + 1, 0, state.garage.width - z.w);
+      copy.y = clamp(z.y + 1, 0, state.garage.height - z.h);
+      state.zones.push(copy);
+      selectedZoneId = copy.id;
+      scheduleSave(); render();
+    } else if (act === "delete-zone") {
+      confirmDialog(`Delete zone "${z.name}"?`, "The zone will be removed.", () => {
+        state.zones = state.zones.filter(x => x.id !== z.id);
+        selectedZoneId = null;
+        scheduleSave(); render();
+      });
+    }
+    hideContextMenu();
+  });
+  setTimeout(() => document.addEventListener("click", hideContextMenu, { once: true }), 0);
+}
+
+// ============================================================
 // Modals
 // ============================================================
 
@@ -1086,12 +1391,18 @@ function submitGarageModal() {
   state.garage.height = h;
   state.garage.gridSize = cell;
   state.garage.frontWall = front;
-  // Clamp existing containers
+  // Clamp existing containers and zones
   for (const c of state.containers) {
     if (c.x + c.w > w) c.x = Math.max(0, w - c.w);
     if (c.y + c.h > h) c.y = Math.max(0, h - c.h);
     if (c.w > w) c.w = w;
     if (c.h > h) c.h = h;
+  }
+  for (const z of state.zones) {
+    if (z.x + z.w > w) z.x = Math.max(0, w - z.w);
+    if (z.y + z.h > h) z.y = Math.max(0, h - z.h);
+    if (z.w > w) z.w = w;
+    if (z.h > h) z.h = h;
   }
   scheduleSave();
   closeGarageModal();
@@ -1210,9 +1521,10 @@ function setupTopbar() {
   updateRotateVisibility();
 
   document.getElementById("addContainerBtn").addEventListener("click", openAddModal);
+  document.getElementById("addZoneBtn").addEventListener("click", addZone);
   document.getElementById("garageSettingsBtn").addEventListener("click", openGarageModal);
   document.getElementById("exportBtn").addEventListener("click", exportJson);
-  document.getElementById("syncRepoBtn").addEventListener("click", () => tryFetchRemote(true).then(ok => { if (ok) { selectedId = null; render(); } }));
+  document.getElementById("syncRepoBtn").addEventListener("click", () => tryFetchRemote(true).then(ok => { if (ok) { selectedId = null; selectedZoneId = null; render(); } }));
   document.getElementById("importBtn").addEventListener("click", () => document.getElementById("importFile").click());
   document.getElementById("importFile").addEventListener("change", e => {
     if (e.target.files[0]) importJson(e.target.files[0]);
@@ -1230,13 +1542,22 @@ function setupTopbar() {
       closeGarageModal();
       hideContextMenu();
     }
-    if (e.key === "Delete" && selectedId && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
-      const c = findContainer(selectedId);
-      if (c) confirmDialog(`Delete "${c.name}"?`, "This container will be removed.", () => {
-        state.containers = state.containers.filter(x => x.id !== c.id);
-        selectedId = null;
-        scheduleSave(); render();
-      });
+    if (e.key === "Delete" && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+      if (selectedZoneId) {
+        const z = findZone(selectedZoneId);
+        if (z) confirmDialog(`Delete zone "${z.name}"?`, "The zone will be removed.", () => {
+          state.zones = state.zones.filter(x => x.id !== z.id);
+          selectedZoneId = null;
+          scheduleSave(); render();
+        });
+      } else if (selectedId) {
+        const c = findContainer(selectedId);
+        if (c) confirmDialog(`Delete "${c.name}"?`, "This container will be removed.", () => {
+          state.containers = state.containers.filter(x => x.id !== c.id);
+          selectedId = null;
+          scheduleSave(); render();
+        });
+      }
     }
   });
 }
