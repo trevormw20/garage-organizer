@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Garage Organizer</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Garage Organizer</div>
+  <div class="topbar-actions">
+    <div class="view-toggle">
+      <button data-view="2d" class="active">2D Top</button>
+      <button data-view="iso">2.5D</button>
+    </div>
+    <button id="addContainerBtn" class="primary">+ Add Container</button>
+    <button id="garageSettingsBtn">Garage Size</button>
+    <div class="sync-group">
+      <button id="exportBtn" title="Download garage.json">Export</button>
+      <button id="importBtn" title="Load from file">Import</button>
+      <button id="syncRepoBtn" title="Reload garage.json from this site">Sync</button>
+      <input type="file" id="importFile" accept="application/json" hidden />
+    </div>
+    <span id="saveStatus" class="save-status">Saved</span>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="canvas-wrap">
+    <div id="viewport"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-empty">
+      <h3>Click a container</h3>
+      <p>Select a container in the garage to view or edit its contents, size, position, or stack.</p>
+      <p class="hint">Tip: drag containers to move. Use corner handle to resize. Right-click for quick actions.</p>
+    </div>
+  </aside>
+</main>
+
+<!-- Modals -->
+<div id="modalAdd" class="modal hidden">
+  <div class="modal-card">
+    <h3>Add Container</h3>
+    <label>Name <input id="addName" type="text" placeholder="e.g. Bin A1" /></label>
+    <label>Category
+      <select id="addCategory"></select>
+    </label>
+    <div class="row">
+      <label>Width (cells) <input id="addW" type="number" min="1" max="40" value="2" /></label>
+      <label>Depth (cells) <input id="addH" type="number" min="1" max="40" value="2" /></label>
+      <label>Height (1=flat, 2+=tall) <input id="addH3" type="number" min="1" max="10" value="1" /></label>
+    </div>
+    <label class="check"><input id="addStack" type="checkbox" /> This is a stack of bins</label>
+    <div class="modal-actions">
+      <button id="addCancel">Cancel</button>
+      <button id="addOk" class="primary">Add</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalGarage" class="modal hidden">
+  <div class="modal-card">
+    <h3>Garage Size</h3>
+    <div class="row">
+      <label>Width (cells) <input id="garageW" type="number" min="5" max="100" /></label>
+      <label>Depth (cells) <input id="garageH" type="number" min="5" max="100" /></label>
+      <label>Cell px <input id="garageCell" type="number" min="10" max="80" /></label>
+    </div>
+    <p class="hint">1 cell ≈ 1 foot is a good default. Adjust to your garage.</p>
+    <div class="modal-actions">
+      <button id="garageCancel">Cancel</button>
+      <button id="garageOk" class="primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="confirmDialog" class="modal hidden">
+  <div class="modal-card">
+    <h3 id="confirmTitle">Are you sure?</h3>
+    <p id="confirmMsg"></p>
+    <div class="modal-actions">
+      <button id="confirmNo">Cancel</button>
+      <button id="confirmYes" class="danger">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
