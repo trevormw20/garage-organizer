@@ -17,9 +17,16 @@ const CATEGORIES = [
 
 const DEFAULT_STATE = {
   version: 1,
-  garage: { width: 30, height: 20, gridSize: 28 },
+  garage: { width: 30, height: 20, gridSize: 28, frontWall: "left" },
   containers: []
 };
+
+const WALLS = [
+  { id: "top",    label: "Top wall (y=0)" },
+  { id: "right",  label: "Right wall (x=max)" },
+  { id: "bottom", label: "Bottom wall (y=max)" },
+  { id: "left",   label: "Left wall (x=0)" }
+];
 
 const STORAGE_KEY = "garage-organizer-v1";
 const REMOTE_FILE = "garage.json";
@@ -33,6 +40,7 @@ let view = "2d";
 let selectedId = null;
 let saveTimer = null;
 let lastSavedJson = "";
+let isoRotation = 0; // 0..3 (90° steps, CW)
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function uid() {
@@ -111,6 +119,7 @@ async function tryFetchRemote(showToastOnSuccess) {
 function ensureStateShape() {
   if (!state.garage) state.garage = clone(DEFAULT_STATE.garage);
   if (typeof state.garage.gridSize !== "number") state.garage.gridSize = 28;
+  if (!state.garage.frontWall) state.garage.frontWall = "left";
   if (!Array.isArray(state.containers)) state.containers = [];
   for (const c of state.containers) {
     if (!c.id) c.id = uid();
@@ -118,6 +127,36 @@ function ensureStateShape() {
     if (typeof c.height3d !== "number") c.height3d = 1;
     if (!c.notes) c.notes = "";
   }
+}
+
+// ============================================================
+// Rotation helpers (for iso view)
+// ============================================================
+
+// Rotate a grid point by k * 90° CW around the garage center.
+// Resulting frame has dimensions (gw, gh) for k=0,2 and (gh, gw) for k=1,3.
+function rotPoint(x, y, k, gw, gh) {
+  switch (((k % 4) + 4) % 4) {
+    case 0: return [x, y];
+    case 1: return [gh - y, x];
+    case 2: return [gw - x, gh - y];
+    case 3: return [y, gw - x];
+  }
+}
+
+// Rotate an axis-aligned box. Returns new {x, y, w, h} in the rotated frame.
+function rotBox(b, k, gw, gh) {
+  switch (((k % 4) + 4) % 4) {
+    case 0: return { x: b.x, y: b.y, w: b.w, h: b.h };
+    case 1: return { x: gh - b.y - b.h, y: b.x, w: b.h, h: b.w };
+    case 2: return { x: gw - b.x - b.w, y: gh - b.y - b.h, w: b.w, h: b.h };
+    case 3: return { x: b.y, y: gw - b.x - b.w, w: b.h, h: b.w };
+  }
+}
+
+function rotatedGarageDims(k) {
+  const { width: gw, height: gh } = state.garage;
+  return ((k % 2) === 0) ? { gw, gh } : { gw: gh, gh: gw };
 }
 
 function exportJson() {
@@ -178,12 +217,44 @@ function renderLegend() {
 // 2D Top-Down View
 // ============================================================
 
+function drawWallLabel2D(svg, wallId, x, y, anchor, rotateDeg, isFront) {
+  const t = document.createElementNS(SVG_NS, "text");
+  t.setAttribute("x", x);
+  t.setAttribute("y", y);
+  t.setAttribute("text-anchor", anchor);
+  t.setAttribute("dominant-baseline", "middle");
+  t.setAttribute("transform", rotateDeg ? `rotate(${rotateDeg} ${x} ${y})` : "");
+  t.setAttribute("class", "wall-label" + (isFront ? " front" : ""));
+  t.textContent = isFront ? "🚪  Garage Door / Front" : wallId.toUpperCase();
+  svg.appendChild(t);
+}
+
+function drawDoorTick2D(svg, M, gw, gh, cell, frontWall) {
+  // Draw a thicker accent line on the chosen front wall, plus 2 short tick marks marking the door.
+  const accent = "#5cb85c";
+  let x1, y1, x2, y2;
+  switch (frontWall) {
+    case "top":    x1 = M;             y1 = M;             x2 = M + gw*cell; y2 = M;             break;
+    case "bottom": x1 = M;             y1 = M + gh*cell;   x2 = M + gw*cell; y2 = M + gh*cell;   break;
+    case "left":   x1 = M;             y1 = M;             x2 = M;           y2 = M + gh*cell;   break;
+    case "right":  x1 = M + gw*cell;   y1 = M;             x2 = M + gw*cell; y2 = M + gh*cell;   break;
+  }
+  const line = document.createElementNS(SVG_NS, "line");
+  line.setAttribute("x1", x1); line.setAttribute("y1", y1);
+  line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+  line.setAttribute("stroke", accent);
+  line.setAttribute("stroke-width", 4);
+  line.setAttribute("stroke-linecap", "round");
+  svg.appendChild(line);
+}
+
 function render2D() {
   const vp = document.getElementById("viewport");
   vp.innerHTML = "";
-  const { width: gw, height: gh, gridSize: cell } = state.garage;
-  const W = gw * cell;
-  const H = gh * cell;
+  const { width: gw, height: gh, gridSize: cell, frontWall } = state.garage;
+  const M = 36; // margin for wall labels
+  const W = gw * cell + 2 * M;
+  const H = gh * cell + 2 * M;
 
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("width", W);
@@ -192,36 +263,45 @@ function render2D() {
 
   // Grid background
   const bg = document.createElementNS(SVG_NS, "rect");
-  bg.setAttribute("x", 0); bg.setAttribute("y", 0);
-  bg.setAttribute("width", W); bg.setAttribute("height", H);
+  bg.setAttribute("x", M); bg.setAttribute("y", M);
+  bg.setAttribute("width", gw * cell); bg.setAttribute("height", gh * cell);
   bg.setAttribute("fill", "#1f232c");
   svg.appendChild(bg);
 
   // Grid lines
   for (let x = 0; x <= gw; x++) {
     const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("x1", x * cell); line.setAttribute("y1", 0);
-    line.setAttribute("x2", x * cell); line.setAttribute("y2", H);
+    line.setAttribute("x1", M + x * cell); line.setAttribute("y1", M);
+    line.setAttribute("x2", M + x * cell); line.setAttribute("y2", M + gh * cell);
     line.setAttribute("stroke", x % 5 === 0 ? "#404a60" : "#2f3645");
     line.setAttribute("stroke-width", x % 5 === 0 ? 1 : 0.5);
     svg.appendChild(line);
   }
   for (let y = 0; y <= gh; y++) {
     const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("x1", 0); line.setAttribute("y1", y * cell);
-    line.setAttribute("x2", W); line.setAttribute("y2", y * cell);
+    line.setAttribute("x1", M); line.setAttribute("y1", M + y * cell);
+    line.setAttribute("x2", M + gw * cell); line.setAttribute("y2", M + y * cell);
     line.setAttribute("stroke", y % 5 === 0 ? "#404a60" : "#2f3645");
     line.setAttribute("stroke-width", y % 5 === 0 ? 1 : 0.5);
     svg.appendChild(line);
   }
+
+  // Wall labels (front wall highlighted)
+  drawWallLabel2D(svg, "top",    M + (gw * cell) / 2, M - 12,             "middle", 0,   frontWall === "top");
+  drawWallLabel2D(svg, "bottom", M + (gw * cell) / 2, M + gh * cell + 22, "middle", 0,   frontWall === "bottom");
+  drawWallLabel2D(svg, "left",   M - 14,              M + (gh * cell) / 2, "middle", -90, frontWall === "left");
+  drawWallLabel2D(svg, "right",  M + gw * cell + 14,  M + (gh * cell) / 2, "middle", 90,  frontWall === "right");
+
+  // Door tick on front wall
+  drawDoorTick2D(svg, M, gw, gh, cell, frontWall);
 
   // Containers
   const sortedIds = state.containers.map(c => c.id);
   for (const c of state.containers) {
     const cat = getCategory(c.category);
     const color = c.color || cat.color;
-    const x = c.x * cell;
-    const y = c.y * cell;
+    const x = M + c.x * cell;
+    const y = M + c.y * cell;
     const w = c.w * cell;
     const h = c.h * cell;
 
@@ -306,6 +386,7 @@ function onContainerMouseDown(e, c) {
   const svg = e.currentTarget.ownerSVGElement;
   const pt = svgPoint(svg, e);
 
+  const M = 36;
   if (role === "resize") {
     dragState = {
       mode: "resize",
@@ -320,8 +401,8 @@ function onContainerMouseDown(e, c) {
       id: c.id,
       startX: c.x,
       startY: c.y,
-      offsetX: pt.x - c.x * cell,
-      offsetY: pt.y - c.y * cell
+      offsetX: pt.x - (M + c.x * cell),
+      offsetY: pt.y - (M + c.y * cell)
     };
   }
   render();
@@ -334,13 +415,14 @@ function onDocMouseMove(e) {
   const c = findContainer(dragState.id);
   if (!c) return;
   const cell = state.garage.gridSize;
+  const M = 36;
   const svg = document.querySelector("#viewport svg");
   if (!svg) return;
   const pt = svgPoint(svg, e);
 
   if (dragState.mode === "move") {
-    let nx = Math.round((pt.x - dragState.offsetX) / cell);
-    let ny = Math.round((pt.y - dragState.offsetY) / cell);
+    let nx = Math.round((pt.x - dragState.offsetX - M) / cell);
+    let ny = Math.round((pt.y - dragState.offsetY - M) / cell);
     nx = clamp(nx, 0, state.garage.width - c.w);
     ny = clamp(ny, 0, state.garage.height - c.h);
     if (nx !== c.x || ny !== c.y) {
@@ -349,8 +431,8 @@ function onDocMouseMove(e) {
       renderSidebar();
     }
   } else if (dragState.mode === "resize") {
-    let nw = Math.max(1, Math.round((pt.x - c.x * cell) / cell));
-    let nh = Math.max(1, Math.round((pt.y - c.y * cell) / cell));
+    let nw = Math.max(1, Math.round((pt.x - M - c.x * cell) / cell));
+    let nh = Math.max(1, Math.round((pt.y - M - c.y * cell) / cell));
     nw = Math.min(nw, state.garage.width - c.x);
     nh = Math.min(nh, state.garage.height - c.y);
     if (nw !== c.w || nh !== c.h) {
@@ -389,7 +471,9 @@ function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 function renderIso() {
   const vp = document.getElementById("viewport");
   vp.innerHTML = "";
-  const { width: gw, height: gh, gridSize } = state.garage;
+  const { gridSize, frontWall } = state.garage;
+  const k = isoRotation;
+  const { gw, gh } = rotatedGarageDims(k);
   const cell = Math.max(20, gridSize); // iso looks better with bigger cells
   const COS30 = Math.cos(Math.PI / 6); // 0.866
   const SIN30 = Math.sin(Math.PI / 6); // 0.5
@@ -410,6 +494,8 @@ function renderIso() {
   // Account for tallest container
   const maxStoreys = state.containers.reduce((m, c) => Math.max(m, (c.height3d || 1) + (c.stack ? c.stack.length : 0)), 1);
   minY -= maxStoreys * HEIGHT_PX;
+  // Reserve room above for wall label
+  minY -= 28;
 
   const padding = 40;
   const W = (maxX - minX) + padding * 2;
@@ -457,30 +543,93 @@ function renderIso() {
     svg.appendChild(line);
   }
 
-  // Sort containers back-to-front for proper occlusion
-  const sorted = [...state.containers].sort((a, b) => {
-    const sa = (a.x + a.w/2) + (a.y + a.h/2);
-    const sb = (b.x + b.w/2) + (b.y + b.h/2);
+  // Front wall in rotated frame
+  const rotatedFrontWall = rotateWallId(frontWall, k);
+  drawWallAccentIso(svg, rotatedFrontWall, gw, gh, ox, oy, isoX, isoY);
+
+  // Compute rotated containers (each gets a {rb, c} pair where rb is rotated box)
+  const rotated = state.containers.map(c => ({ c, rb: rotBox({ x: c.x, y: c.y, w: c.w, h: c.h }, k, state.garage.width, state.garage.height) }));
+
+  // Sort back-to-front for proper occlusion (using rotated coords)
+  rotated.sort((a, b) => {
+    const sa = (a.rb.x + a.rb.w/2) + (a.rb.y + a.rb.h/2);
+    const sb = (b.rb.x + b.rb.w/2) + (b.rb.y + b.rb.h/2);
     return sa - sb;
   });
 
-  for (const c of sorted) {
+  for (const { c, rb } of rotated) {
     const cat = getCategory(c.category);
     const color = c.color || cat.color;
-    const totalStoreys = c.stack ? c.stack.length : (c.height3d || 1);
-
-    drawIsoBox(svg, c, color, totalStoreys, ox, oy, isoX, isoY, HEIGHT_PX, cell);
+    drawIsoBox(svg, c, rb, color, ox, oy, isoX, isoY, HEIGHT_PX, cell);
   }
+
+  // Front-wall label rendered LAST so it sits on top
+  drawWallLabelIso(svg, rotatedFrontWall, gw, gh, ox, oy, isoX, isoY);
 
   vp.appendChild(svg);
 }
 
-function drawIsoBox(svg, c, color, storeys, ox, oy, isoX, isoY, HEIGHT_PX, cell) {
+// Rotate a wall id by k 90° CW steps. The wall stays attached to the same physical part
+// of the garage; this just figures out where it is in the rotated frame.
+function rotateWallId(wallId, k) {
+  const order = ["top", "right", "bottom", "left"]; // CW order
+  const i = order.indexOf(wallId);
+  if (i < 0) return wallId;
+  return order[(i + k) % 4];
+}
+
+function drawWallAccentIso(svg, wallId, gw, gh, ox, oy, isoX, isoY) {
+  // 4 floor corners in rotated frame
+  const a = wallEndpoints(wallId, gw, gh);
+  const p1 = [isoX(a[0][0], a[0][1]) + ox, isoY(a[0][0], a[0][1]) + oy];
+  const p2 = [isoX(a[1][0], a[1][1]) + ox, isoY(a[1][0], a[1][1]) + oy];
+  const line = document.createElementNS(SVG_NS, "line");
+  line.setAttribute("x1", p1[0]); line.setAttribute("y1", p1[1]);
+  line.setAttribute("x2", p2[0]); line.setAttribute("y2", p2[1]);
+  line.setAttribute("stroke", "#5cb85c");
+  line.setAttribute("stroke-width", 4);
+  line.setAttribute("stroke-linecap", "round");
+  svg.appendChild(line);
+}
+
+function drawWallLabelIso(svg, wallId, gw, gh, ox, oy, isoX, isoY) {
+  const a = wallEndpoints(wallId, gw, gh);
+  const mx = (a[0][0] + a[1][0]) / 2;
+  const my = (a[0][1] + a[1][1]) / 2;
+  // Push the label outward from the floor center
+  const cx = gw / 2, cy = gh / 2;
+  const dx = mx - cx, dy = my - cy;
+  const len = Math.hypot(dx, dy) || 1;
+  const offset = 1.0; // grid units
+  const lx = mx + (dx / len) * offset;
+  const ly = my + (dy / len) * offset;
+  const px = isoX(lx, ly) + ox;
+  const py = isoY(lx, ly) + oy;
+  const t = document.createElementNS(SVG_NS, "text");
+  t.setAttribute("x", px);
+  t.setAttribute("y", py);
+  t.setAttribute("text-anchor", "middle");
+  t.setAttribute("class", "wall-label front iso");
+  t.textContent = "🚪  Garage Door / Front";
+  svg.appendChild(t);
+}
+
+function wallEndpoints(wallId, gw, gh) {
+  switch (wallId) {
+    case "top":    return [[0, 0],   [gw, 0]];
+    case "bottom": return [[0, gh],  [gw, gh]];
+    case "left":   return [[0, 0],   [0, gh]];
+    case "right":  return [[gw, 0],  [gw, gh]];
+  }
+  return [[0, 0], [0, 0]];
+}
+
+function drawIsoBox(svg, c, rb, color, ox, oy, isoX, isoY, HEIGHT_PX, cell) {
   const g = document.createElementNS(SVG_NS, "g");
   g.dataset.id = c.id;
   g.style.cursor = "pointer";
 
-  const x1 = c.x, y1 = c.y, x2 = c.x + c.w, y2 = c.y + c.h;
+  const x1 = rb.x, y1 = rb.y, x2 = rb.x + rb.w, y2 = rb.y + rb.h;
   const isStack = !!c.stack;
 
   // Build each storey from bottom up
@@ -922,6 +1071,7 @@ function openGarageModal() {
   document.getElementById("garageW").value = state.garage.width;
   document.getElementById("garageH").value = state.garage.height;
   document.getElementById("garageCell").value = state.garage.gridSize;
+  document.getElementById("garageFront").value = state.garage.frontWall || "left";
   document.getElementById("modalGarage").classList.remove("hidden");
 }
 
@@ -931,9 +1081,11 @@ function submitGarageModal() {
   const w = clamp(parseInt(document.getElementById("garageW").value) || 30, 5, 100);
   const h = clamp(parseInt(document.getElementById("garageH").value) || 20, 5, 100);
   const cell = clamp(parseInt(document.getElementById("garageCell").value) || 28, 10, 80);
+  const front = document.getElementById("garageFront").value;
   state.garage.width = w;
   state.garage.height = h;
   state.garage.gridSize = cell;
+  state.garage.frontWall = front;
   // Clamp existing containers
   for (const c of state.containers) {
     if (c.x + c.w > w) c.x = Math.max(0, w - c.w);
@@ -1043,13 +1195,20 @@ function toast(msg, kind = "") {
 // ============================================================
 
 function setupTopbar() {
+  const rotGroup = document.getElementById("rotateGroup");
+  const updateRotateVisibility = () => { rotGroup.hidden = (view !== "iso"); };
   document.querySelectorAll(".view-toggle button").forEach(btn => {
     btn.addEventListener("click", () => {
       view = btn.dataset.view;
       document.querySelectorAll(".view-toggle button").forEach(b => b.classList.toggle("active", b === btn));
+      updateRotateVisibility();
       render();
     });
   });
+  document.getElementById("rotateCcw").addEventListener("click", () => { isoRotation = (isoRotation + 3) % 4; render(); });
+  document.getElementById("rotateCw").addEventListener("click", () => { isoRotation = (isoRotation + 1) % 4; render(); });
+  updateRotateVisibility();
+
   document.getElementById("addContainerBtn").addEventListener("click", openAddModal);
   document.getElementById("garageSettingsBtn").addEventListener("click", openGarageModal);
   document.getElementById("exportBtn").addEventListener("click", exportJson);

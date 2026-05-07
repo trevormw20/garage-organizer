@@ -14,8 +14,12 @@
       <button data-view="2d" class="active">2D Top</button>
       <button data-view="iso">2.5D</button>
     </div>
+    <div id="rotateGroup" class="rotate-group" hidden>
+      <button id="rotateCcw" title="Rotate counter-clockwise">↺</button>
+      <button id="rotateCw"  title="Rotate clockwise">↻</button>
+    </div>
     <button id="addContainerBtn" class="primary">+ Add Container</button>
-    <button id="garageSettingsBtn">Garage Size</button>
+    <button id="garageSettingsBtn">Garage</button>
     <div class="sync-group">
       <button id="exportBtn" title="Download garage.json">Export</button>
       <button id="importBtn" title="Load from file">Import</button>
@@ -64,13 +68,21 @@
 
 <div id="modalGarage" class="modal hidden">
   <div class="modal-card">
-    <h3>Garage Size</h3>
+    <h3>Garage</h3>
     <div class="row">
       <label>Width (cells) <input id="garageW" type="number" min="5" max="100" /></label>
       <label>Depth (cells) <input id="garageH" type="number" min="5" max="100" /></label>
       <label>Cell px <input id="garageCell" type="number" min="10" max="80" /></label>
     </div>
-    <p class="hint">1 cell ≈ 1 foot is a good default. Adjust to your garage.</p>
+    <label>Garage Door / Front wall
+      <select id="garageFront">
+        <option value="left">Left</option>
+        <option value="right">Right</option>
+        <option value="top">Top</option>
+        <option value="bottom">Bottom</option>
+      </select>
+    </label>
+    <p class="hint">1 cell ≈ 1 foot is a good default. The "Front wall" is where your garage door is — it'll be highlighted green and labeled in both views.</p>
     <div class="modal-actions">
       <button id="garageCancel">Cancel</button>
       <button id="garageOk" class="primary">Save</button>
