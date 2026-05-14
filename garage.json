@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "garage": {
+    "width": 38,
+    "height": 22,
+    "gridSize": 28,
+    "frontWall": "left"
+  },
+  "zones": [
+    {
+      "id": "a2561947-ef09-41ab-8d5a-bc6fbd4b95e3",
+      "name": "Yard Work",
+      "color": "#5cb85c",
+      "x": 0,
+      "y": 0,
+      "w": 8,
+      "h": 6,
+      "notes": ""
+    }
+  ],
+  "containers": [
+    {
+      "id": "1d809fd7-5771-4b6b-acbb-71c492d63a41",
+      "name": "test",
+      "category": "storage-box",
+      "color": "#a06236",
+      "x": 29,
+      "y": 9,
+      "w": 2,
+      "h": 1,
+      "height3d": 1,
+      "notes": "",
+      "contents": [],
+      "stack": null
+    },
+    {
+      "id": "94f0075e-ba07-471f-a0c9-f3d59d720e55",
+      "name": "Liam Workbench",
+      "category": "storage-box",
+      "color": "#a06236",
+      "x": 26,
+      "y": 18,
+      "w": 4,
+      "h": 4,
+      "height3d": 5,
+      "notes": "",
+      "contents": [],
+      "stack": null
+    },
+    {
+      "id": "4c9a7671-38a6-43ec-a308-a4cb7dd5bf10",
+      "name": "Steps",
+      "category": "storage-box",
+      "color": "#988a81",
+      "x": 34,
+      "y": 16,
+      "w": 4,
+      "h": 6,
+      "height3d": 2,
+      "notes": "",
+      "contents": [],
+      "stack": null
+    },
+    {
+      "id": "44e1568b-5018-4729-97b1-5fe38b31c423",
+      "name": "Diaper Bin",
+      "category": "storage-box",
+      "color": "#ffffff",
+      "x": 33,
+      "y": 21,
+      "w": 1,
+      "h": 1,
+      "height3d": 2,
+      "notes": "",
+      "contents": [],
+      "stack": null
+    },
+    {
+      "id": "007e262f-1745-4795-8e4e-2c554c549e7f",
+      "name": "recycle bin",
+      "category": "storage-box",
+      "color": "#f6f5f4",
+      "x": 31,
+      "y": 21,
+      "w": 1,
+      "h": 1,
+      "height3d": 2,
+      "notes": "",
+      "contents": [],
+      "stack": null
+    },
+    {
+      "id": "ea3bc6d3-8cc4-452e-884e-1de9f56900f4",
+      "name": "Shelves",
+      "category": "shelves",
+      "color": "#0d0d0d",
+      "x": 14,
+      "y": 18,
+      "w": 8,
+      "h": 4,
+      "height3d": 10,
+      "notes": "",
+      "contents": [],
+      "stack": null
+    },
+    {
+      "id": "3588e980-4822-4d77-82f5-8511138fef31",
+      "name": "Stroller",
+      "category": "tools",
+      "color": "#d44c4c",
+      "x": 22,
+      "y": 6,
+      "w": 6,
+      "h": 4,
+      "height3d": 4,
+      "notes": "",
+      "contents": [],
+      "stack": null
+    },
+    {
+      "id": "24b34ef2-aec6-4f21-b8ee-8bc73e37d384",
+      "name": "Kids Storage",
+      "category": "shelves",
+      "color": "#4a8fd6",
+      "x": 22,
+      "y": 18,
+      "w": 4,
+      "h": 4,
+      "height3d": 4,
+      "notes": "",
+      "contents": [],
+      "stack": null
+    },
+    {
+      "id": "53dcb91d-7d42-40e2-8b68-66378c2a30b8",
+      "name": "Liam Bike",
+      "category": "tools",
+      "color": "#464444",
+      "x": 12,
+      "y": 12,
+      "w": 4,
+      "h": 3,
+      "height3d": 3,
+      "notes": "",
+      "contents": [],
+      "stack": null
+    }
+  ]
+}
