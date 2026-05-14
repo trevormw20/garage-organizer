@@ -295,6 +295,10 @@ function itemOpacity(c) {
 function zoneOpacity() {
   return categoryFilter ? 0.6 : 1;
 }
+function isHighlighted(c) {
+  return !!categoryFilter && c.category === categoryFilter;
+}
+const HIGHLIGHT_STROKE = "#ffd700"; // yellow border for the filtered category
 
 function ensureStateShape() {
   if (!state.garage) state.garage = clone(DEFAULT_STATE.garage);
@@ -499,14 +503,16 @@ function render2D() {
     g.dataset.id = c.id;
     g.setAttribute("opacity", itemOpacity(c));
 
+    const isSel = c.id === selectedId;
+    const hl = isHighlighted(c);
     const rect = document.createElementNS(SVG_NS, "rect");
     rect.setAttribute("x", x);
     rect.setAttribute("y", y);
     rect.setAttribute("width", w);
     rect.setAttribute("height", h);
     rect.setAttribute("fill", color);
-    rect.setAttribute("stroke", c.id === selectedId ? "#fff" : "rgba(0,0,0,0.4)");
-    rect.setAttribute("stroke-width", c.id === selectedId ? 2 : 1);
+    rect.setAttribute("stroke", isSel ? "#fff" : hl ? HIGHLIGHT_STROKE : "rgba(0,0,0,0.4)");
+    rect.setAttribute("stroke-width", isSel ? 2 : hl ? 2.5 : 1);
     rect.setAttribute("rx", 3);
     rect.classList.add("container-rect");
     g.appendChild(rect);
@@ -1013,11 +1019,13 @@ function drawIsoBox(svg, c, rb, color, ox, oy, isoX, isoY, HEIGHT_PX, cell) {
     g.appendChild(right);
 
     // Top face
+    const isSel = c.id === selectedId;
+    const hl = isHighlighted(c);
     const top = document.createElementNS(SVG_NS, "polygon");
     top.setAttribute("points", `${tlf[0]},${tlf[1]} ${trf[0]},${trf[1]} ${trb[0]},${trb[1]} ${tlb[0]},${tlb[1]}`);
     top.setAttribute("fill", storeyColor);
-    top.setAttribute("stroke", c.id === selectedId ? "#fff" : "rgba(0,0,0,0.5)");
-    top.setAttribute("stroke-width", c.id === selectedId ? 2 : 0.7);
+    top.setAttribute("stroke", isSel ? "#fff" : hl ? HIGHLIGHT_STROKE : "rgba(0,0,0,0.5)");
+    top.setAttribute("stroke-width", isSel ? 2 : hl ? 2.5 : 0.7);
     g.appendChild(top);
 
     if (storeyLabel) {
