@@ -158,6 +158,20 @@
       "notes": "",
       "contents": [],
       "stack": null
+    },
+    {
+      "id": "f586bfee-5f70-46ca-aad3-ac8f25e15c73",
+      "name": "Hhn (copy)",
+      "category": "storage-box",
+      "color": "#a06236",
+      "x": 2,
+      "y": 0,
+      "w": 2,
+      "h": 2,
+      "height3d": 1,
+      "notes": "",
+      "contents": [],
+      "stack": null
     }
   ]
 }
