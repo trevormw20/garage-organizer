@@ -5,15 +5,26 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const CATEGORIES = [
-  { id: "storage-box",  label: "Storage Box",   color: "#a06236" },
-  { id: "tools",        label: "Tools",         color: "#d44c4c" },
-  { id: "equipment",    label: "Equipment",     color: "#e08a3a" },
-  { id: "workbench",    label: "Workbench",     color: "#7a7f8c" },
-  { id: "shelves",      label: "Shelves",       color: "#4a8fd6" },
-  { id: "temporary",    label: "Temp Storage",  color: "#d6c14a" },
-  { id: "going-out",    label: "Going Out",     color: "#5cb85c" },
-  { id: "donation",     label: "Donation",      color: "#9b59b6" }
+  { id: "storage-box",     label: "Storage Box",      color: "#a06236" },
+  { id: "trevor-storage",  label: "Trevor's Storage", color: "#2c5f9e" },
+  { id: "niki-storage",    label: "Niki's Storage",   color: "#b94a8a" },
+  { id: "kids-storage",    label: "Kids' Storage",    color: "#f2a83a" },
+  { id: "tools",           label: "Tools",            color: "#d44c4c" },
+  { id: "equipment",       label: "Equipment",        color: "#e08a3a" },
+  { id: "workbench",       label: "Workbench",        color: "#7a7f8c" },
+  { id: "shelves",         label: "Shelves",          color: "#4a8fd6" },
+  { id: "toys",            label: "Toys",             color: "#ff6fb5" },
+  { id: "temporary",       label: "Temp Storage",     color: "#d6c14a" },
+  { id: "going-out",       label: "Going Out",        color: "#5cb85c" },
+  { id: "donation",        label: "Donation",         color: "#9b59b6" }
 ];
+
+// 1 grid cell = 0.5 ft
+const FEET_PER_CELL = 0.5;
+function ft(cells) {
+  const v = cells * FEET_PER_CELL;
+  return Number.isInteger(v) ? `${v} ft` : `${v.toFixed(1)} ft`;
+}
 
 const DEFAULT_STATE = {
   version: 1,
@@ -45,6 +56,19 @@ let selectedZoneId = null;   // selected zone id (mutually exclusive with select
 let saveTimer = null;
 let lastSavedJson = "";
 let isoRotation = 0; // 0..3 (90° steps, CW)
+let categoryFilter = "";     // empty = show all; otherwise category id to highlight
+
+// GitHub cloud sync
+const GH_OWNER = "trevormw20";
+const GH_REPO = "garage-organizer";
+const GH_FILE = "garage.json";
+const GH_TOKEN_KEY = "gh-token-v1";
+const GH_SHA_KEY = "gh-file-sha-v1";
+let ghSha = localStorage.getItem(GH_SHA_KEY) || null;
+let cloudSaveTimer = null;
+let cloudPullInFlight = false;
+
+function getGhToken() { return localStorage.getItem(GH_TOKEN_KEY) || ""; }
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function uid() {
@@ -81,6 +105,7 @@ function saveNow() {
     console.error("Save failed:", err);
     setSaveStatus("error");
   }
+  scheduleCloudSave();
 }
 
 function setSaveStatus(s) {
@@ -90,7 +115,146 @@ function setSaveStatus(s) {
   el.textContent = s === "saving" ? "Saving…" : s === "saved" ? "Saved" : "Error";
 }
 
+// ----- GitHub Cloud Sync -----
+
+function setCloudStatus(s, hint) {
+  const el = document.getElementById("cloudStatus");
+  if (!el) return;
+  el.dataset.state = s;
+  const map = {
+    off:      { text: "☁ Local only", title: "Click Cloud to set up GitHub sync" },
+    pending:  { text: "☁ Pending…",   title: "Will commit to GitHub shortly" },
+    syncing:  { text: "☁ Syncing…",   title: "Pushing to GitHub" },
+    synced:   { text: "☁ Synced",     title: "All changes saved to GitHub" },
+    pulling:  { text: "☁ Pulling…",   title: "Fetching latest from GitHub" },
+    conflict: { text: "☁ Conflict",   title: "Someone else updated — pull latest" },
+    error:    { text: "☁ Error",      title: hint || "Cloud sync failed" }
+  };
+  const cfg = map[s] || map.off;
+  el.textContent = cfg.text;
+  el.title = cfg.title;
+}
+
+function b64encodeUtf8(str) {
+  // UTF-8 safe base64 encode for the GitHub API
+  return btoa(unescape(encodeURIComponent(str)));
+}
+function b64decodeUtf8(b64) {
+  return decodeURIComponent(escape(atob(b64.replace(/\n/g, ""))));
+}
+
+async function ghPull() {
+  const token = getGhToken();
+  if (!token) throw new Error("NO_TOKEN");
+  const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_FILE}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+    cache: "no-store"
+  });
+  if (res.status === 404) return { state: null, sha: null }; // file not yet created
+  if (res.status === 401 || res.status === 403) throw new Error("AUTH");
+  if (!res.ok) throw new Error(`PULL_${res.status}`);
+  const data = await res.json();
+  const decoded = b64decodeUtf8(data.content);
+  return { state: JSON.parse(decoded), sha: data.sha };
+}
+
+async function ghPush(payload) {
+  const token = getGhToken();
+  if (!token) throw new Error("NO_TOKEN");
+  const url = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_FILE}`;
+  const body = {
+    message: "Update garage layout",
+    content: b64encodeUtf8(JSON.stringify(payload, null, 2))
+  };
+  if (ghSha) body.sha = ghSha;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (res.status === 409 || res.status === 422) throw new Error("CONFLICT");
+  if (res.status === 401 || res.status === 403) throw new Error("AUTH");
+  if (!res.ok) throw new Error(`PUSH_${res.status}`);
+  const data = await res.json();
+  return data.content.sha;
+}
+
+function scheduleCloudSave() {
+  if (!getGhToken()) { setCloudStatus("off"); return; }
+  setCloudStatus("pending");
+  if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = setTimeout(cloudSaveNow, 3500);
+}
+
+async function cloudSaveNow() {
+  if (!getGhToken()) { setCloudStatus("off"); return; }
+  setCloudStatus("syncing");
+  try {
+    const newSha = await ghPush(state);
+    ghSha = newSha;
+    localStorage.setItem(GH_SHA_KEY, ghSha);
+    setCloudStatus("synced");
+  } catch (e) {
+    if (e.message === "CONFLICT") {
+      setCloudStatus("conflict");
+      toast("Cloud conflict: someone else edited. Click Cloud → Pull latest.", "error");
+    } else if (e.message === "AUTH") {
+      setCloudStatus("error", "Bad token — open Cloud to fix");
+      toast("GitHub token rejected. Open Cloud to update it.", "error");
+    } else {
+      setCloudStatus("error", e.message);
+      console.error("Cloud save failed:", e);
+    }
+  }
+}
+
+async function cloudPull(opts = {}) {
+  if (!getGhToken()) return false;
+  if (cloudPullInFlight) return false;
+  cloudPullInFlight = true;
+  setCloudStatus("pulling");
+  try {
+    const { state: remote, sha } = await ghPull();
+    if (!remote) {
+      // No remote file yet — keep local
+      setCloudStatus("synced");
+      return false;
+    }
+    if (sha === ghSha && !opts.force) {
+      // Remote unchanged since our last sync — preserve any local-only edits.
+      setCloudStatus("synced");
+      return false;
+    }
+    state = remote;
+    ensureStateShape();
+    ghSha = sha;
+    localStorage.setItem(GH_SHA_KEY, ghSha);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    setCloudStatus("synced");
+    if (opts.silent !== true) toast("Synced from GitHub", "success");
+    return true;
+  } catch (e) {
+    if (e.message === "AUTH") {
+      setCloudStatus("error", "Bad token");
+      if (!opts.silent) toast("GitHub token rejected. Open Cloud to update it.", "error");
+    } else {
+      setCloudStatus("error", e.message);
+      if (!opts.silent) toast("Pull failed: " + e.message, "error");
+    }
+    return false;
+  } finally {
+    cloudPullInFlight = false;
+  }
+}
+
 async function loadInitial() {
+  // 1) Try GitHub API if a token is set (authoritative source).
+  if (getGhToken()) {
+    const pulled = await cloudPull({ silent: true });
+    if (pulled || state.containers?.length > 0 || state.zones?.length > 0) return;
+  }
+  // 2) Fall back to localStorage.
   const local = localStorage.getItem(STORAGE_KEY);
   if (local) {
     try {
@@ -102,6 +266,7 @@ async function loadInitial() {
       }
     } catch (e) { console.warn("Local data corrupted, falling back."); }
   }
+  // 3) Fall back to anonymous static fetch.
   await tryFetchRemote(false);
 }
 
@@ -121,6 +286,14 @@ async function tryFetchRemote(showToastOnSuccess) {
     if (showToastOnSuccess) toast("No garage.json found on this site", "error");
   }
   return false;
+}
+
+function itemOpacity(c) {
+  if (!categoryFilter) return 1;
+  return c.category === categoryFilter ? 1 : 0.6;
+}
+function zoneOpacity() {
+  return categoryFilter ? 0.6 : 1;
 }
 
 function ensureStateShape() {
@@ -324,6 +497,7 @@ function render2D() {
 
     const g = document.createElementNS(SVG_NS, "g");
     g.dataset.id = c.id;
+    g.setAttribute("opacity", itemOpacity(c));
 
     const rect = document.createElementNS(SVG_NS, "rect");
     rect.setAttribute("x", x);
@@ -399,8 +573,10 @@ function drawZone2DBg(svg, z, M, cell) {
   const x = M + z.x * cell, y = M + z.y * cell;
   const w = z.w * cell, h = z.h * cell;
   const isSel = z.id === selectedZoneId;
+  const op = zoneOpacity();
 
   const r = document.createElementNS(SVG_NS, "rect");
+  if (op !== 1) r.setAttribute("opacity", op);
   r.setAttribute("x", x); r.setAttribute("y", y);
   r.setAttribute("width", w); r.setAttribute("height", h);
   r.setAttribute("fill", z.color);
@@ -431,6 +607,8 @@ function drawZone2DLabel(svg, z, M, cell) {
   const g = document.createElementNS(SVG_NS, "g");
   g.style.cursor = "move";
   g.dataset.zoneId = z.id;
+  const opG = zoneOpacity();
+  if (opG !== 1) g.setAttribute("opacity", opG);
 
   const bg = document.createElementNS(SVG_NS, "rect");
   bg.setAttribute("x", x + 4);
@@ -711,6 +889,8 @@ function drawZoneIso(svg, z, rb, ox, oy, isoX, isoY) {
   poly.setAttribute("stroke", z.color);
   poly.setAttribute("stroke-width", z.id === selectedZoneId ? 2.5 : 1.8);
   poly.setAttribute("stroke-dasharray", "8,5");
+  const opP = zoneOpacity();
+  if (opP !== 1) poly.setAttribute("opacity", opP);
   poly.style.cursor = "pointer";
   poly.addEventListener("click", (e) => { e.stopPropagation(); selectedZoneId = z.id; selectedId = null; render(); });
   poly.addEventListener("contextmenu", (e) => { e.preventDefault(); showZoneContextMenu(e, z); });
@@ -728,6 +908,8 @@ function drawZoneIsoLabel(svg, z, rb, ox, oy, isoX, isoY) {
   t.setAttribute("text-anchor", "middle");
   t.setAttribute("class", "zone-label-iso");
   t.setAttribute("fill", z.color);
+  const opL = zoneOpacity();
+  if (opL !== 1) t.setAttribute("opacity", opL);
   t.style.cursor = "pointer";
   t.textContent = z.name || "Zone";
   t.addEventListener("click", (e) => { e.stopPropagation(); selectedZoneId = z.id; selectedId = null; render(); });
@@ -793,6 +975,7 @@ function drawIsoBox(svg, c, rb, color, ox, oy, isoX, isoY, HEIGHT_PX, cell) {
   const g = document.createElementNS(SVG_NS, "g");
   g.dataset.id = c.id;
   g.style.cursor = "pointer";
+  g.setAttribute("opacity", itemOpacity(c));
 
   const x1 = rb.x, y1 = rb.y, x2 = rb.x + rb.w, y2 = rb.y + rb.h;
   const isStack = !!c.stack;
@@ -1322,7 +1505,22 @@ function openAddModal() {
   document.getElementById("addH3").value = 1;
   document.getElementById("addStack").checked = false;
   m.classList.remove("hidden");
+  updateAddFtHints();
   setTimeout(() => document.getElementById("addName").focus(), 50);
+}
+
+function updateAddFtHints() {
+  const w = parseFloat(document.getElementById("addW").value) || 0;
+  const h = parseFloat(document.getElementById("addH").value) || 0;
+  document.getElementById("addWft").textContent = "= " + ft(w);
+  document.getElementById("addHft").textContent = "= " + ft(h);
+}
+
+function updateGarageFtHints() {
+  const w = parseFloat(document.getElementById("garageW").value) || 0;
+  const h = parseFloat(document.getElementById("garageH").value) || 0;
+  document.getElementById("garageWft").textContent = "= " + ft(w);
+  document.getElementById("garageHft").textContent = "= " + ft(h);
 }
 
 function closeAddModal() { document.getElementById("modalAdd").classList.add("hidden"); }
@@ -1330,9 +1528,9 @@ function closeAddModal() { document.getElementById("modalAdd").classList.add("hi
 function submitAddModal() {
   const name = document.getElementById("addName").value.trim() || "Untitled";
   const category = document.getElementById("addCategory").value;
-  const w = clamp(parseInt(document.getElementById("addW").value) || 2, 1, 40);
-  const h = clamp(parseInt(document.getElementById("addH").value) || 2, 1, 40);
-  const h3 = clamp(parseInt(document.getElementById("addH3").value) || 1, 1, 10);
+  const w = clamp(parseInt(document.getElementById("addW").value) || 2, 1, 80);
+  const h = clamp(parseInt(document.getElementById("addH").value) || 2, 1, 80);
+  const h3 = clamp(parseInt(document.getElementById("addH3").value) || 1, 1, 20);
   const isStack = document.getElementById("addStack").checked;
 
   const cat = getCategory(category);
@@ -1378,13 +1576,14 @@ function openGarageModal() {
   document.getElementById("garageCell").value = state.garage.gridSize;
   document.getElementById("garageFront").value = state.garage.frontWall || "left";
   document.getElementById("modalGarage").classList.remove("hidden");
+  updateGarageFtHints();
 }
 
 function closeGarageModal() { document.getElementById("modalGarage").classList.add("hidden"); }
 
 function submitGarageModal() {
-  const w = clamp(parseInt(document.getElementById("garageW").value) || 30, 5, 100);
-  const h = clamp(parseInt(document.getElementById("garageH").value) || 20, 5, 100);
+  const w = clamp(parseInt(document.getElementById("garageW").value) || 30, 5, 200);
+  const h = clamp(parseInt(document.getElementById("garageH").value) || 20, 5, 200);
   const cell = clamp(parseInt(document.getElementById("garageCell").value) || 28, 10, 80);
   const front = document.getElementById("garageFront").value;
   state.garage.width = w;
@@ -1407,6 +1606,71 @@ function submitGarageModal() {
   scheduleSave();
   closeGarageModal();
   render();
+}
+
+function openCloudModal() {
+  const m = document.getElementById("modalCloud");
+  const token = getGhToken();
+  document.getElementById("ghTokenInput").value = token ? "••••••••••••••••" : "";
+  document.getElementById("ghStatus").textContent = token ? "Connected." : "Not connected.";
+  document.getElementById("ghDisconnect").style.display = token ? "" : "none";
+  document.getElementById("ghPullNow").style.display = token ? "" : "none";
+  m.classList.remove("hidden");
+  setTimeout(() => document.getElementById("ghTokenInput").focus(), 50);
+}
+function closeCloudModal() { document.getElementById("modalCloud").classList.add("hidden"); }
+
+async function submitCloudModal() {
+  const raw = document.getElementById("ghTokenInput").value.trim();
+  if (!raw || raw.startsWith("••")) {
+    // No change to token; nothing to do
+    closeCloudModal();
+    return;
+  }
+  // Validate by pulling once
+  localStorage.setItem(GH_TOKEN_KEY, raw);
+  ghSha = null;
+  localStorage.removeItem(GH_SHA_KEY);
+  setCloudStatus("pulling");
+  try {
+    const { state: remote, sha } = await ghPull();
+    if (remote) {
+      state = remote;
+      ensureStateShape();
+      ghSha = sha;
+      localStorage.setItem(GH_SHA_KEY, ghSha);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      setCloudStatus("synced");
+      toast("Connected — pulled latest from GitHub", "success");
+    } else {
+      // No remote file yet — push current state
+      const newSha = await ghPush(state);
+      ghSha = newSha;
+      localStorage.setItem(GH_SHA_KEY, ghSha);
+      setCloudStatus("synced");
+      toast("Connected — uploaded current layout to GitHub", "success");
+    }
+    closeCloudModal();
+    render();
+  } catch (e) {
+    if (e.message === "AUTH") {
+      setCloudStatus("error", "Bad token");
+      toast("Token rejected by GitHub. Check the token's repo & permissions.", "error");
+      localStorage.removeItem(GH_TOKEN_KEY);
+    } else {
+      setCloudStatus("error", e.message);
+      toast("Failed: " + e.message, "error");
+    }
+  }
+}
+
+function disconnectCloud() {
+  localStorage.removeItem(GH_TOKEN_KEY);
+  localStorage.removeItem(GH_SHA_KEY);
+  ghSha = null;
+  setCloudStatus("off");
+  closeCloudModal();
+  toast("Disconnected from GitHub", "success");
 }
 
 function confirmDialog(title, msg, onYes) {
@@ -1524,11 +1788,30 @@ function setupTopbar() {
   document.getElementById("addZoneBtn").addEventListener("click", addZone);
   document.getElementById("garageSettingsBtn").addEventListener("click", openGarageModal);
   document.getElementById("exportBtn").addEventListener("click", exportJson);
-  document.getElementById("syncRepoBtn").addEventListener("click", () => tryFetchRemote(true).then(ok => { if (ok) { selectedId = null; selectedZoneId = null; render(); } }));
+  document.getElementById("cloudBtn").addEventListener("click", openCloudModal);
+  document.getElementById("syncRepoBtn").addEventListener("click", async () => {
+    if (getGhToken()) {
+      const changed = await cloudPull();
+      if (changed) { selectedId = null; selectedZoneId = null; render(); }
+    } else {
+      const ok = await tryFetchRemote(true);
+      if (ok) { selectedId = null; selectedZoneId = null; render(); }
+    }
+  });
   document.getElementById("importBtn").addEventListener("click", () => document.getElementById("importFile").click());
   document.getElementById("importFile").addEventListener("change", e => {
     if (e.target.files[0]) importJson(e.target.files[0]);
     e.target.value = "";
+  });
+
+  // Category filter
+  const filterSel = document.getElementById("categoryFilter");
+  filterSel.innerHTML = '<option value="">All categories</option>' +
+    CATEGORIES.map(c => `<option value="${c.id}">${c.label}</option>`).join("");
+  filterSel.value = categoryFilter;
+  filterSel.addEventListener("change", e => {
+    categoryFilter = e.target.value;
+    render();
   });
 
   document.getElementById("addCancel").addEventListener("click", closeAddModal);
@@ -1536,10 +1819,36 @@ function setupTopbar() {
   document.getElementById("garageCancel").addEventListener("click", closeGarageModal);
   document.getElementById("garageOk").addEventListener("click", submitGarageModal);
 
+  // Live ft hints in modals
+  document.getElementById("addW").addEventListener("input", updateAddFtHints);
+  document.getElementById("addH").addEventListener("input", updateAddFtHints);
+  document.getElementById("garageW").addEventListener("input", updateGarageFtHints);
+  document.getElementById("garageH").addEventListener("input", updateGarageFtHints);
+
+  // Cloud modal wiring
+  document.getElementById("ghSave").addEventListener("click", submitCloudModal);
+  document.getElementById("ghCancel").addEventListener("click", closeCloudModal);
+  document.getElementById("ghDisconnect").addEventListener("click", disconnectCloud);
+  document.getElementById("ghPullNow").addEventListener("click", async () => {
+    const changed = await cloudPull();
+    if (changed) { selectedId = null; selectedZoneId = null; render(); }
+    closeCloudModal();
+  });
+
+  // Auto-pull when the tab regains focus (handles "open on phone B after edits on phone A")
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && getGhToken() && !cloudPullInFlight) {
+      cloudPull({ silent: true }).then(changed => {
+        if (changed) { selectedId = null; selectedZoneId = null; render(); }
+      });
+    }
+  });
+
   document.addEventListener("keydown", e => {
     if (e.key === "Escape") {
       closeAddModal();
       closeGarageModal();
+      closeCloudModal();
       hideContextMenu();
     }
     if (e.key === "Delete" && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
@@ -1564,6 +1873,7 @@ function setupTopbar() {
 
 async function init() {
   setupTopbar();
+  setCloudStatus(getGhToken() ? "synced" : "off");
   await loadInitial();
   setSaveStatus("saved");
   render();
