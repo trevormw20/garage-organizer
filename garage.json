@@ -186,6 +186,20 @@
       "notes": "",
       "contents": [],
       "stack": null
+    },
+    {
+      "id": "51945e1f-84b4-4db6-8246-b79ce877c2d2",
+      "name": "recycle bin (copy)",
+      "category": "storage-box",
+      "color": "#f6f5f4",
+      "x": 0,
+      "y": 0,
+      "w": 2,
+      "h": 3,
+      "height3d": 2,
+      "notes": "",
+      "contents": [],
+      "stack": null
     }
   ]
 }
