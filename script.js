@@ -57,6 +57,12 @@ let saveTimer = null;
 let lastSavedJson = "";
 let isoRotation = 0; // 0..3 (90° steps, CW)
 let categoryFilter = "";     // empty = show all; otherwise category id to highlight
+let zoomLevel = 1.0;         // viewport zoom multiplier
+
+// Multi-pointer tracking for touch drag + pinch zoom
+const activePointers = new Map(); // pointerId -> { x, y }
+let pinchStart = null;       // { dist, zoom } when two fingers are down
+let panState = null;         // { startX, startY, startScrollX, startScrollY }
 
 // GitHub cloud sync
 const GH_OWNER = "trevormw20";
@@ -448,8 +454,8 @@ function render2D() {
   const H = gh * cell + 2 * M;
 
   const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("width", W);
-  svg.setAttribute("height", H);
+  svg.setAttribute("width", W * zoomLevel);
+  svg.setAttribute("height", H * zoomLevel);
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 
   // Grid background
@@ -551,7 +557,7 @@ function render2D() {
     // Resize handle (bottom right) when selected
     if (c.id === selectedId) {
       const handle = document.createElementNS(SVG_NS, "rect");
-      const hs = 10;
+      const hs = 14;
       handle.setAttribute("x", x + w - hs);
       handle.setAttribute("y", y + h - hs);
       handle.setAttribute("width", hs);
@@ -562,8 +568,8 @@ function render2D() {
       g.appendChild(handle);
     }
 
-    // Mouse handlers
-    g.addEventListener("mousedown", (e) => onContainerMouseDown(e, c));
+    // Pointer handlers (mouse + touch)
+    g.addEventListener("pointerdown", (e) => onContainerMouseDown(e, c));
     g.addEventListener("contextmenu", (e) => { e.preventDefault(); showContextMenu(e, c); });
 
     svg.appendChild(g);
@@ -593,7 +599,7 @@ function drawZone2DBg(svg, z, M, cell) {
   r.setAttribute("rx", 6);
   r.classList.add("zone-rect");
   r.dataset.zoneId = z.id;
-  r.addEventListener("mousedown", (e) => onZoneMouseDown(e, z));
+  r.addEventListener("pointerdown", (e) => onZoneMouseDown(e, z));
   r.addEventListener("contextmenu", (e) => { e.preventDefault(); showZoneContextMenu(e, z); });
   svg.appendChild(r);
 }
@@ -635,7 +641,7 @@ function drawZone2DLabel(svg, z, M, cell) {
 
   if (isSel) {
     const handle = document.createElementNS(SVG_NS, "rect");
-    const hs = 10;
+    const hs = 14;
     handle.setAttribute("x", x + w - hs);
     handle.setAttribute("y", y + h - hs);
     handle.setAttribute("width", hs);
@@ -646,7 +652,7 @@ function drawZone2DLabel(svg, z, M, cell) {
     g.appendChild(handle);
   }
 
-  g.addEventListener("mousedown", (e) => onZoneMouseDown(e, z));
+  g.addEventListener("pointerdown", (e) => onZoneMouseDown(e, z));
   g.addEventListener("contextmenu", (e) => { e.preventDefault(); showZoneContextMenu(e, z); });
   svg.appendChild(g);
 }
@@ -655,7 +661,10 @@ function drawZone2DLabel(svg, z, M, cell) {
 let dragState = null;
 
 function onContainerMouseDown(e, c) {
+  // If a 2nd pointer is already down, we're entering pinch mode — don't drag.
+  if (activePointers.size > 1) return;
   e.stopPropagation();
+  if (e.preventDefault) e.preventDefault();
   selectedId = c.id;
   selectedZoneId = null;
   const role = e.target.dataset?.role;
@@ -665,11 +674,7 @@ function onContainerMouseDown(e, c) {
 
   const M = 36;
   if (role === "resize") {
-    dragState = {
-      kind: "container",
-      mode: "resize",
-      id: c.id
-    };
+    dragState = { kind: "container", mode: "resize", id: c.id };
   } else {
     dragState = {
       kind: "container",
@@ -680,12 +685,12 @@ function onContainerMouseDown(e, c) {
     };
   }
   render();
-  document.addEventListener("mousemove", onDocMouseMove);
-  document.addEventListener("mouseup", onDocMouseUp);
 }
 
 function onZoneMouseDown(e, z) {
+  if (activePointers.size > 1) return;
   e.stopPropagation();
+  if (e.preventDefault) e.preventDefault();
   selectedZoneId = z.id;
   selectedId = null;
   const role = e.target.dataset?.role;
@@ -705,8 +710,6 @@ function onZoneMouseDown(e, z) {
     };
   }
   render();
-  document.addEventListener("mousemove", onDocMouseMove);
-  document.addEventListener("mouseup", onDocMouseUp);
 }
 
 function onDocMouseMove(e) {
@@ -747,8 +750,6 @@ function onDocMouseUp() {
     dragState = null;
     scheduleSave();
   }
-  document.removeEventListener("mousemove", onDocMouseMove);
-  document.removeEventListener("mouseup", onDocMouseUp);
 }
 
 function svgPoint(svg, evt) {
@@ -803,8 +804,8 @@ function renderIso() {
   const oy = -minY + padding;
 
   const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("width", W);
-  svg.setAttribute("height", H);
+  svg.setAttribute("width", W * zoomLevel);
+  svg.setAttribute("height", H * zoomLevel);
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 
   // Floor
@@ -1792,6 +1793,10 @@ function setupTopbar() {
   document.getElementById("rotateCw").addEventListener("click", () => { isoRotation = (isoRotation + 1) % 4; render(); });
   updateRotateVisibility();
 
+  document.getElementById("zoomIn").addEventListener("click", () => setZoom(zoomLevel * 1.2));
+  document.getElementById("zoomOut").addEventListener("click", () => setZoom(zoomLevel / 1.2));
+  document.getElementById("zoomLabel").addEventListener("click", () => setZoom(1.0));
+
   document.getElementById("addContainerBtn").addEventListener("click", openAddModal);
   document.getElementById("addZoneBtn").addEventListener("click", addZone);
   document.getElementById("garageSettingsBtn").addEventListener("click", openGarageModal);
@@ -1879,8 +1884,87 @@ function setupTopbar() {
   });
 }
 
+// ============================================================
+// Zoom + multi-pointer (touch drag + pinch zoom)
+// ============================================================
+
+function setZoom(z) {
+  zoomLevel = clamp(z, 0.3, 4);
+  const lbl = document.getElementById("zoomLabel");
+  if (lbl) lbl.textContent = Math.round(zoomLevel * 100) + "%";
+  render();
+}
+
+function setupGlobalPointer() {
+  // Capture phase so this runs before per-element pointerdown handlers.
+  document.addEventListener("pointerdown", (e) => {
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (activePointers.size === 2) {
+      // Cancel any in-progress drag/pan and start pinch.
+      dragState = null;
+      panState = null;
+      const pts = [...activePointers.values()];
+      pinchStart = {
+        dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1,
+        zoom: zoomLevel
+      };
+      return;
+    }
+    // First pointer on empty SVG canvas → start pan (so finger drag scrolls the view).
+    if (activePointers.size === 1) {
+      const t = e.target;
+      const onSvg = t && t.closest && t.closest("#viewport svg");
+      if (onSvg) {
+        const onInteractive = t.closest(".container-rect, .zone-rect, .resize-handle, [data-id], [data-zone-id]");
+        if (!onInteractive) {
+          const wrap = document.querySelector(".canvas-wrap");
+          panState = {
+            startX: e.clientX,
+            startY: e.clientY,
+            startScrollX: wrap.scrollLeft,
+            startScrollY: wrap.scrollTop
+          };
+        }
+      }
+    }
+  }, true);
+
+  document.addEventListener("pointermove", (e) => {
+    if (activePointers.has(e.pointerId)) {
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (activePointers.size >= 2 && pinchStart) {
+      const pts = [...activePointers.values()];
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      setZoom(pinchStart.zoom * (dist / pinchStart.dist));
+      e.preventDefault();
+      return;
+    }
+    if (panState) {
+      const wrap = document.querySelector(".canvas-wrap");
+      wrap.scrollLeft = panState.startScrollX - (e.clientX - panState.startX);
+      wrap.scrollTop  = panState.startScrollY - (e.clientY - panState.startY);
+      e.preventDefault();
+      return;
+    }
+    if (dragState) onDocMouseMove(e);
+  });
+
+  const releasePointer = (e) => {
+    activePointers.delete(e.pointerId);
+    if (activePointers.size < 2) pinchStart = null;
+    if (activePointers.size === 0) {
+      panState = null;
+      if (dragState) onDocMouseUp(e);
+    }
+  };
+  document.addEventListener("pointerup", releasePointer);
+  document.addEventListener("pointercancel", releasePointer);
+}
+
 async function init() {
   setupTopbar();
+  setupGlobalPointer();
   setCloudStatus(getGhToken() ? "synced" : "off");
   await loadInitial();
   setSaveStatus("saved");
