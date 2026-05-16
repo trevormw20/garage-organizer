@@ -395,6 +395,23 @@ button.danger:hover { background: #b94343; }
   stroke-width: 3px;
 }
 
+.area-label {
+  pointer-events: none;
+  fill: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.holding-badge {
+  pointer-events: none;
+  fill: var(--warn);
+  font-size: 12px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: rgba(20,24,30,0.85);
+  stroke-width: 3px;
+}
+
 /* Modal */
 .modal {
   position: fixed;

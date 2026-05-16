@@ -29,9 +29,12 @@ function ft(cells) {
 const DEFAULT_STATE = {
   version: 1,
   garage: { width: 30, height: 20, gridSize: 28, frontWall: "left" },
+  holding: { width: 14, height: 6 }, // unsorted holding area below the garage
   zones: [],
   containers: []
 };
+
+const HOLDING_GAP_PX = 60;
 
 const ZONE_COLORS = ["#5cb85c", "#4a8fd6", "#d6c14a", "#9b59b6", "#e07b3a", "#d44c4c", "#3aa6c0", "#c45fa6"];
 
@@ -310,6 +313,9 @@ function ensureStateShape() {
   if (!state.garage) state.garage = clone(DEFAULT_STATE.garage);
   if (typeof state.garage.gridSize !== "number") state.garage.gridSize = 28;
   if (!state.garage.frontWall) state.garage.frontWall = "left";
+  if (!state.holding) state.holding = clone(DEFAULT_STATE.holding);
+  if (typeof state.holding.width !== "number")  state.holding.width  = 14;
+  if (typeof state.holding.height !== "number") state.holding.height = 6;
   if (!Array.isArray(state.containers)) state.containers = [];
   if (!Array.isArray(state.zones)) state.zones = [];
   for (const c of state.containers) {
@@ -317,12 +323,27 @@ function ensureStateShape() {
     if (!c.contents) c.contents = [];
     if (typeof c.height3d !== "number") c.height3d = 1;
     if (!c.notes) c.notes = "";
+    if (!c.area) c.area = "garage";
   }
   for (const z of state.zones) {
     if (!z.id) z.id = uid();
     if (!z.notes) z.notes = "";
     if (!z.color) z.color = ZONE_COLORS[0];
   }
+}
+
+// ----- Area helpers (garage vs holding) -----
+function containerArea(c) { return c.area || "garage"; }
+function areaDims(area) {
+  return area === "holding"
+    ? { width: state.holding.width, height: state.holding.height }
+    : { width: state.garage.width, height: state.garage.height };
+}
+function areaOriginY(area, M) {
+  if (area === "holding") {
+    return M + state.garage.height * state.garage.gridSize + HOLDING_GAP_PX;
+  }
+  return M;
 }
 
 // ============================================================
@@ -449,23 +470,25 @@ function render2D() {
   const vp = document.getElementById("viewport");
   vp.innerHTML = "";
   const { width: gw, height: gh, gridSize: cell, frontWall } = state.garage;
+  const { width: hw, height: hh } = state.holding;
   const M = 36; // margin for wall labels
-  const W = gw * cell + 2 * M;
-  const H = gh * cell + 2 * M;
+  const W = Math.max(gw, hw) * cell + 2 * M;
+  const H = gh * cell + 2 * M + HOLDING_GAP_PX + hh * cell + M;
 
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("width", W * zoomLevel);
   svg.setAttribute("height", H * zoomLevel);
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 
-  // Grid background
+  // === GARAGE area ===
+  // Garage background
   const bg = document.createElementNS(SVG_NS, "rect");
   bg.setAttribute("x", M); bg.setAttribute("y", M);
   bg.setAttribute("width", gw * cell); bg.setAttribute("height", gh * cell);
   bg.setAttribute("fill", "#1f232c");
   svg.appendChild(bg);
 
-  // Grid lines
+  // Garage grid lines
   for (let x = 0; x <= gw; x++) {
     const line = document.createElementNS(SVG_NS, "line");
     line.setAttribute("x1", M + x * cell); line.setAttribute("y1", M);
@@ -483,6 +506,42 @@ function render2D() {
     svg.appendChild(line);
   }
 
+  // === HOLDING area ===
+  const hy = M + gh * cell + HOLDING_GAP_PX;
+  // Divider section label
+  const divLabel = document.createElementNS(SVG_NS, "text");
+  divLabel.setAttribute("x", M);
+  divLabel.setAttribute("y", hy - 14);
+  divLabel.setAttribute("class", "area-label");
+  divLabel.textContent = "📦  Holding Area (unsorted)";
+  svg.appendChild(divLabel);
+  // Holding background
+  const hbg = document.createElementNS(SVG_NS, "rect");
+  hbg.setAttribute("x", M); hbg.setAttribute("y", hy);
+  hbg.setAttribute("width", hw * cell); hbg.setAttribute("height", hh * cell);
+  hbg.setAttribute("fill", "#1e2129");
+  hbg.setAttribute("stroke", "rgba(255,255,255,0.08)");
+  hbg.setAttribute("stroke-dasharray", "4,3");
+  hbg.setAttribute("rx", 4);
+  svg.appendChild(hbg);
+  // Holding grid lines
+  for (let x = 0; x <= hw; x++) {
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", M + x * cell); line.setAttribute("y1", hy);
+    line.setAttribute("x2", M + x * cell); line.setAttribute("y2", hy + hh * cell);
+    line.setAttribute("stroke", x % 5 === 0 ? "#3a4456" : "#272d39");
+    line.setAttribute("stroke-width", x % 5 === 0 ? 1 : 0.5);
+    svg.appendChild(line);
+  }
+  for (let y = 0; y <= hh; y++) {
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", M); line.setAttribute("y1", hy + y * cell);
+    line.setAttribute("x2", M + hw * cell); line.setAttribute("y2", hy + y * cell);
+    line.setAttribute("stroke", y % 5 === 0 ? "#3a4456" : "#272d39");
+    line.setAttribute("stroke-width", y % 5 === 0 ? 1 : 0.5);
+    svg.appendChild(line);
+  }
+
   // Wall labels (front wall highlighted)
   drawWallLabel2D(svg, "top",    M + (gw * cell) / 2, M - 12,             "middle", 0,   frontWall === "top");
   drawWallLabel2D(svg, "bottom", M + (gw * cell) / 2, M + gh * cell + 22, "middle", 0,   frontWall === "bottom");
@@ -495,13 +554,13 @@ function render2D() {
   // Zone backgrounds (drawn first, behind containers)
   for (const z of state.zones) drawZone2DBg(svg, z, M, cell);
 
-  // Containers
-  const sortedIds = state.containers.map(c => c.id);
+  // Containers (area-aware)
   for (const c of state.containers) {
     const cat = getCategory(c.category);
     const color = c.color || cat.color;
+    const oy = areaOriginY(containerArea(c), M);
     const x = M + c.x * cell;
-    const y = M + c.y * cell;
+    const y = oy + c.y * cell;
     const w = c.w * cell;
     const h = c.h * cell;
 
@@ -673,6 +732,7 @@ function onContainerMouseDown(e, c) {
   const pt = svgPoint(svg, e);
 
   const M = 36;
+  const oy = areaOriginY(containerArea(c), M);
   if (role === "resize") {
     dragState = { kind: "container", mode: "resize", id: c.id };
   } else {
@@ -681,7 +741,7 @@ function onContainerMouseDown(e, c) {
       mode: "move",
       id: c.id,
       offsetX: pt.x - (M + c.x * cell),
-      offsetY: pt.y - (M + c.y * cell)
+      offsetY: pt.y - (oy + c.y * cell)
     };
   }
   render();
@@ -722,11 +782,16 @@ function onDocMouseMove(e) {
   if (!svg) return;
   const pt = svgPoint(svg, e);
 
+  // Zones live in the garage frame; containers may live in holding too.
+  const area = dragState.kind === "container" ? containerArea(item) : "garage";
+  const oy = areaOriginY(area, M);
+  const dims = areaDims(area);
+
   if (dragState.mode === "move") {
     let nx = Math.round((pt.x - dragState.offsetX - M) / cell);
-    let ny = Math.round((pt.y - dragState.offsetY - M) / cell);
-    nx = clamp(nx, 0, state.garage.width - item.w);
-    ny = clamp(ny, 0, state.garage.height - item.h);
+    let ny = Math.round((pt.y - dragState.offsetY - oy) / cell);
+    nx = clamp(nx, 0, dims.width - item.w);
+    ny = clamp(ny, 0, dims.height - item.h);
     if (nx !== item.x || ny !== item.y) {
       item.x = nx; item.y = ny;
       render2D();
@@ -734,9 +799,9 @@ function onDocMouseMove(e) {
     }
   } else if (dragState.mode === "resize") {
     let nw = Math.max(1, Math.round((pt.x - M - item.x * cell) / cell));
-    let nh = Math.max(1, Math.round((pt.y - M - item.y * cell) / cell));
-    nw = Math.min(nw, state.garage.width - item.x);
-    nh = Math.min(nh, state.garage.height - item.y);
+    let nh = Math.max(1, Math.round((pt.y - oy - item.y * cell) / cell));
+    nw = Math.min(nw, dims.width - item.x);
+    nh = Math.min(nh, dims.height - item.y);
     if (nw !== item.w || nh !== item.h) {
       item.w = nw; item.h = nh;
       render2D();
@@ -853,8 +918,10 @@ function renderIso() {
     drawZoneIso(svg, z, rb, ox, oy, isoX, isoY);
   }
 
-  // Compute rotated containers (each gets a {rb, c} pair where rb is rotated box)
-  const rotated = state.containers.map(c => ({ c, rb: rotBox({ x: c.x, y: c.y, w: c.w, h: c.h }, k, state.garage.width, state.garage.height) }));
+  // Compute rotated containers (each gets a {rb, c} pair where rb is rotated box).
+  // Iso shows only the garage area — holding-area items are listed off to the side.
+  const garageContainers = state.containers.filter(c => containerArea(c) === "garage");
+  const rotated = garageContainers.map(c => ({ c, rb: rotBox({ x: c.x, y: c.y, w: c.w, h: c.h }, k, state.garage.width, state.garage.height) }));
 
   // Sort back-to-front for proper occlusion (using rotated coords)
   rotated.sort((a, b) => {
@@ -877,6 +944,18 @@ function renderIso() {
 
   // Front-wall label rendered LAST so it sits on top
   drawWallLabelIso(svg, rotatedFrontWall, gw, gh, ox, oy, isoX, isoY);
+
+  // Holding-area badge (top-right) showing how many items are off to the side
+  const holdingCount = state.containers.length - garageContainers.length;
+  if (holdingCount > 0) {
+    const badge = document.createElementNS(SVG_NS, "text");
+    badge.setAttribute("x", W - 16);
+    badge.setAttribute("y", 22);
+    badge.setAttribute("text-anchor", "end");
+    badge.setAttribute("class", "holding-badge");
+    badge.textContent = `📦 ${holdingCount} in Holding (switch to 2D)`;
+    svg.appendChild(badge);
+  }
 
   vp.appendChild(svg);
 }
@@ -1114,15 +1193,22 @@ function renderSidebar() {
         <label>Category</label>
         <select id="detailCategory">${CATEGORIES.map(k => `<option value="${k.id}" ${k.id === c.category ? "selected" : ""}>${k.label}</option>`).join("")}</select>
       </div>
+      <div class="field">
+        <label>Location</label>
+        <select id="detailArea">
+          <option value="garage"  ${containerArea(c) === "garage"  ? "selected" : ""}>Garage</option>
+          <option value="holding" ${containerArea(c) === "holding" ? "selected" : ""}>Holding (unsorted)</option>
+        </select>
+      </div>
     </div>
 
     <div class="row">
-      <div class="field"><label>X</label><input type="number" id="detailX" value="${c.x}" min="0" max="${state.garage.width - c.w}" /></div>
-      <div class="field"><label>Y</label><input type="number" id="detailY" value="${c.y}" min="0" max="${state.garage.height - c.h}" /></div>
+      <div class="field"><label>X</label><input type="number" id="detailX" value="${c.x}" min="0" max="${areaDims(containerArea(c)).width - c.w}" /></div>
+      <div class="field"><label>Y</label><input type="number" id="detailY" value="${c.y}" min="0" max="${areaDims(containerArea(c)).height - c.h}" /></div>
     </div>
     <div class="row">
-      <div class="field"><label>Width</label><input type="number" id="detailW" value="${c.w}" min="1" max="40" /></div>
-      <div class="field"><label>Depth</label><input type="number" id="detailH" value="${c.h}" min="1" max="40" /></div>
+      <div class="field"><label>Width</label><input type="number" id="detailW" value="${c.w}" min="1" max="80" /><span class="ft-hint">= ${ft(c.w)}</span></div>
+      <div class="field"><label>Depth</label><input type="number" id="detailH" value="${c.h}" min="1" max="80" /><span class="ft-hint">= ${ft(c.h)}</span></div>
       <div class="field"><label>Tall (2.5D)</label><input type="number" id="detailH3" value="${c.height3d || 1}" min="1" max="10" ${c.stack ? "disabled" : ""} /></div>
     </div>
 
@@ -1213,20 +1299,29 @@ function bindSidebarEvents(c) {
     if (!c.color) c.color = getCategory(c.category).color;
     scheduleSave(); render();
   });
+  document.getElementById("detailArea").addEventListener("change", e => {
+    const newArea = e.target.value;
+    if (newArea !== containerArea(c)) {
+      c.area = newArea;
+      const spot = findFreeSpot(c.w, c.h, newArea);
+      c.x = spot.x; c.y = spot.y;
+      scheduleSave(); render();
+    }
+  });
   document.getElementById("detailX").addEventListener("change", e => {
-    const v = clamp(parseInt(e.target.value) || 0, 0, state.garage.width - c.w);
+    const v = clamp(parseInt(e.target.value) || 0, 0, areaDims(containerArea(c)).width - c.w);
     set("x", v);
   });
   document.getElementById("detailY").addEventListener("change", e => {
-    const v = clamp(parseInt(e.target.value) || 0, 0, state.garage.height - c.h);
+    const v = clamp(parseInt(e.target.value) || 0, 0, areaDims(containerArea(c)).height - c.h);
     set("y", v);
   });
   document.getElementById("detailW").addEventListener("change", e => {
-    const v = clamp(parseInt(e.target.value) || 1, 1, state.garage.width - c.x);
+    const v = clamp(parseInt(e.target.value) || 1, 1, areaDims(containerArea(c)).width - c.x);
     set("w", v);
   });
   document.getElementById("detailH").addEventListener("change", e => {
-    const v = clamp(parseInt(e.target.value) || 1, 1, state.garage.height - c.y);
+    const v = clamp(parseInt(e.target.value) || 1, 1, areaDims(containerArea(c)).height - c.y);
     set("h", v);
   });
   const h3 = document.getElementById("detailH3");
@@ -1513,6 +1608,7 @@ function openAddModal() {
   document.getElementById("addH").value = 2;
   document.getElementById("addH3").value = 1;
   document.getElementById("addStack").checked = false;
+  document.getElementById("addArea").value = "garage";
   m.classList.remove("hidden");
   updateAddFtHints();
   setTimeout(() => document.getElementById("addName").focus(), 50);
@@ -1537,19 +1633,20 @@ function closeAddModal() { document.getElementById("modalAdd").classList.add("hi
 function submitAddModal() {
   const name = document.getElementById("addName").value.trim() || "Untitled";
   const category = document.getElementById("addCategory").value;
+  const area = document.getElementById("addArea").value || "garage";
   const w = clamp(parseInt(document.getElementById("addW").value) || 2, 1, 80);
   const h = clamp(parseInt(document.getElementById("addH").value) || 2, 1, 80);
   const h3 = clamp(parseInt(document.getElementById("addH3").value) || 1, 1, 20);
   const isStack = document.getElementById("addStack").checked;
 
   const cat = getCategory(category);
-  // Find first free spot (simple search)
-  const pos = findFreeSpot(w, h);
+  const pos = findFreeSpot(w, h, area);
 
   const c = {
     id: uid(),
     name,
     category,
+    area,
     color: cat.color,
     x: pos.x, y: pos.y,
     w, h,
@@ -1565,13 +1662,16 @@ function submitAddModal() {
   render();
 }
 
-function findFreeSpot(w, h) {
-  const { width: gw, height: gh } = state.garage;
-  for (let y = 0; y <= gh - h; y++) {
-    for (let x = 0; x <= gw - w; x++) {
+function findFreeSpot(w, h, area = "garage") {
+  const dims = areaDims(area);
+  const fitW = Math.min(w, dims.width);
+  const fitH = Math.min(h, dims.height);
+  for (let y = 0; y <= dims.height - fitH; y++) {
+    for (let x = 0; x <= dims.width - fitW; x++) {
       const overlap = state.containers.some(c =>
-        x < c.x + c.w && x + w > c.x &&
-        y < c.y + c.h && y + h > c.y
+        containerArea(c) === area &&
+        x < c.x + c.w && x + fitW > c.x &&
+        y < c.y + c.h && y + fitH > c.y
       );
       if (!overlap) return { x, y };
     }
@@ -1584,8 +1684,18 @@ function openGarageModal() {
   document.getElementById("garageH").value = state.garage.height;
   document.getElementById("garageCell").value = state.garage.gridSize;
   document.getElementById("garageFront").value = state.garage.frontWall || "left";
+  document.getElementById("holdingW").value = state.holding.width;
+  document.getElementById("holdingH").value = state.holding.height;
   document.getElementById("modalGarage").classList.remove("hidden");
   updateGarageFtHints();
+  updateHoldingFtHints();
+}
+
+function updateHoldingFtHints() {
+  const w = parseFloat(document.getElementById("holdingW").value) || 0;
+  const h = parseFloat(document.getElementById("holdingH").value) || 0;
+  document.getElementById("holdingWft").textContent = "= " + ft(w);
+  document.getElementById("holdingHft").textContent = "= " + ft(h);
 }
 
 function closeGarageModal() { document.getElementById("modalGarage").classList.add("hidden"); }
@@ -1595,17 +1705,24 @@ function submitGarageModal() {
   const h = clamp(parseInt(document.getElementById("garageH").value) || 20, 5, 200);
   const cell = clamp(parseInt(document.getElementById("garageCell").value) || 28, 10, 80);
   const front = document.getElementById("garageFront").value;
+  const hw = clamp(parseInt(document.getElementById("holdingW").value) || 14, 2, 60);
+  const hh = clamp(parseInt(document.getElementById("holdingH").value) || 6, 2, 60);
   state.garage.width = w;
   state.garage.height = h;
   state.garage.gridSize = cell;
   state.garage.frontWall = front;
-  // Clamp existing containers and zones
+  state.holding.width = hw;
+  state.holding.height = hh;
+  // Clamp containers to their own area's bounds
   for (const c of state.containers) {
-    if (c.x + c.w > w) c.x = Math.max(0, w - c.w);
-    if (c.y + c.h > h) c.y = Math.max(0, h - c.h);
-    if (c.w > w) c.w = w;
-    if (c.h > h) c.h = h;
+    const a = containerArea(c);
+    const dims = areaDims(a);
+    if (c.w > dims.width)  c.w = dims.width;
+    if (c.h > dims.height) c.h = dims.height;
+    if (c.x + c.w > dims.width)  c.x = Math.max(0, dims.width  - c.w);
+    if (c.y + c.h > dims.height) c.y = Math.max(0, dims.height - c.h);
   }
+  // Zones live in the garage
   for (const z of state.zones) {
     if (z.x + z.w > w) z.x = Math.max(0, w - z.w);
     if (z.y + z.h > h) z.y = Math.max(0, h - z.h);
@@ -1739,7 +1856,7 @@ function handleCtx(act, c) {
     const copy = clone(c);
     copy.id = uid();
     copy.name = c.name + " (copy)";
-    const pos = findFreeSpot(c.w, c.h);
+    const pos = findFreeSpot(c.w, c.h, containerArea(c));
     copy.x = pos.x; copy.y = pos.y;
     state.containers.push(copy);
     selectedId = copy.id;
@@ -1837,6 +1954,8 @@ function setupTopbar() {
   document.getElementById("addH").addEventListener("input", updateAddFtHints);
   document.getElementById("garageW").addEventListener("input", updateGarageFtHints);
   document.getElementById("garageH").addEventListener("input", updateGarageFtHints);
+  document.getElementById("holdingW").addEventListener("input", updateHoldingFtHints);
+  document.getElementById("holdingH").addEventListener("input", updateHoldingFtHints);
 
   // Cloud modal wiring
   document.getElementById("ghSave").addEventListener("click", submitCloudModal);

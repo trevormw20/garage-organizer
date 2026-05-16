@@ -65,6 +65,12 @@
     <label>Category
       <select id="addCategory"></select>
     </label>
+    <label>Add to
+      <select id="addArea">
+        <option value="garage">Garage</option>
+        <option value="holding">Holding Area (unsorted)</option>
+      </select>
+    </label>
     <div class="row">
       <label>Width (cells) <input id="addW" type="number" min="1" max="80" value="2" /><span class="ft-hint" id="addWft">= 1 ft</span></label>
       <label>Depth (cells) <input id="addH" type="number" min="1" max="80" value="2" /><span class="ft-hint" id="addHft">= 1 ft</span></label>
@@ -96,6 +102,12 @@
       </select>
     </label>
     <p class="hint">1 cell = 0.5 ft. So a 40×24 garage = 20 ft × 12 ft. The "Front wall" is where your garage door is — it'll be highlighted green and labeled in both views.</p>
+    <h4 style="margin:14px 0 6px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">Holding Area</h4>
+    <div class="row">
+      <label>Width (cells) <input id="holdingW" type="number" min="2" max="60" /><span class="ft-hint" id="holdingWft"></span></label>
+      <label>Depth (cells) <input id="holdingH" type="number" min="2" max="60" /><span class="ft-hint" id="holdingHft"></span></label>
+    </div>
+    <p class="hint">A staging area below the garage for unsorted items.</p>
     <div class="modal-actions">
       <button id="garageCancel">Cancel</button>
       <button id="garageOk" class="primary">Save</button>
