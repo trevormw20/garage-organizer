@@ -31,7 +31,8 @@
       "height3d": 1,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "94f0075e-ba07-471f-a0c9-f3d59d720e55",
@@ -45,7 +46,8 @@
       "height3d": 5,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "4c9a7671-38a6-43ec-a308-a4cb7dd5bf10",
@@ -59,7 +61,8 @@
       "height3d": 2,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "44e1568b-5018-4729-97b1-5fe38b31c423",
@@ -73,7 +76,8 @@
       "height3d": 2,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "007e262f-1745-4795-8e4e-2c554c549e7f",
@@ -87,7 +91,8 @@
       "height3d": 2,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "ea3bc6d3-8cc4-452e-884e-1de9f56900f4",
@@ -101,7 +106,8 @@
       "height3d": 4,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "3588e980-4822-4d77-82f5-8511138fef31",
@@ -115,7 +121,8 @@
       "height3d": 4,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "24b34ef2-aec6-4f21-b8ee-8bc73e37d384",
@@ -129,7 +136,8 @@
       "height3d": 4,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "53dcb91d-7d42-40e2-8b68-66378c2a30b8",
@@ -143,7 +151,8 @@
       "height3d": 3,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "8c5a1d2a-1413-4703-93f0-eb26b13ef12e",
@@ -157,7 +166,8 @@
       "height3d": 1,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "a8dd1df4-71e4-4283-a7f5-7f2fc859852a",
@@ -171,7 +181,8 @@
       "height3d": 10,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "58bd6a12-c3e1-4faa-b7ee-b8d86b70a086",
@@ -185,7 +196,8 @@
       "height3d": 10,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     },
     {
       "id": "51945e1f-84b4-4db6-8246-b79ce877c2d2",
@@ -199,7 +211,12 @@
       "height3d": 2,
       "notes": "",
       "contents": [],
-      "stack": null
+      "stack": null,
+      "area": "garage"
     }
-  ]
+  ],
+  "holding": {
+    "width": 14,
+    "height": 6
+  }
 }
