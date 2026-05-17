@@ -782,28 +782,54 @@ function onDocMouseMove(e) {
   if (!svg) return;
   const pt = svgPoint(svg, e);
 
-  // Zones live in the garage frame; containers may live in holding too.
-  const area = dragState.kind === "container" ? containerArea(item) : "garage";
-  const oy = areaOriginY(area, M);
-  const dims = areaDims(area);
+  // Moving a CONTAINER: the cursor position decides which area it belongs to,
+  // so drag can drop items into the Holding area (and back).
+  if (dragState.kind === "container" && dragState.mode === "move") {
+    const garageBottom = M + state.garage.height * cell;
+    // Midpoint of the gap is the area-switch threshold.
+    const threshold = garageBottom + HOLDING_GAP_PX / 2;
+    const newArea = pt.y < threshold ? "garage" : "holding";
+    const oy = areaOriginY(newArea, M);
+    const dims = areaDims(newArea);
 
-  if (dragState.mode === "move") {
     let nx = Math.round((pt.x - dragState.offsetX - M) / cell);
     let ny = Math.round((pt.y - dragState.offsetY - oy) / cell);
-    nx = clamp(nx, 0, dims.width - item.w);
-    ny = clamp(ny, 0, dims.height - item.h);
-    if (nx !== item.x || ny !== item.y) {
+    nx = clamp(nx, 0, Math.max(0, dims.width  - item.w));
+    ny = clamp(ny, 0, Math.max(0, dims.height - item.h));
+
+    const areaChanged = newArea !== containerArea(item);
+    if (nx !== item.x || ny !== item.y || areaChanged) {
+      item.area = newArea;
       item.x = nx; item.y = ny;
       render2D();
       renderSidebar();
     }
-  } else if (dragState.mode === "resize") {
+    return;
+  }
+
+  // Zones live only in the garage; container RESIZE stays in its current area.
+  const area = dragState.kind === "container" ? containerArea(item) : "garage";
+  const oy = areaOriginY(area, M);
+  const dims = areaDims(area);
+
+  if (dragState.mode === "resize") {
     let nw = Math.max(1, Math.round((pt.x - M - item.x * cell) / cell));
     let nh = Math.max(1, Math.round((pt.y - oy - item.y * cell) / cell));
     nw = Math.min(nw, dims.width - item.x);
     nh = Math.min(nh, dims.height - item.y);
     if (nw !== item.w || nh !== item.h) {
       item.w = nw; item.h = nh;
+      render2D();
+      renderSidebar();
+    }
+  } else if (dragState.mode === "move") {
+    // Zone move — locked to garage frame.
+    let nx = Math.round((pt.x - dragState.offsetX - M) / cell);
+    let ny = Math.round((pt.y - dragState.offsetY - oy) / cell);
+    nx = clamp(nx, 0, dims.width - item.w);
+    ny = clamp(ny, 0, dims.height - item.h);
+    if (nx !== item.x || ny !== item.y) {
+      item.x = nx; item.y = ny;
       render2D();
       renderSidebar();
     }
